@@ -3,6 +3,8 @@ from dash import html, dcc, Input, Output, State, callback_context
 from dash_canvas import DashCanvas
 from dash_canvas.utils import parse_jsonstring
 import pydicom
+import plotly.graph_objects as go
+
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 if not hasattr(np, 'bool'):
@@ -852,7 +854,8 @@ app.layout = html.Div(id="app-container", children=[
                                 "border": "2px solid #e0e0e0",
                                 "borderRadius": "8px",
                                 "position": "relative",
-                                "boxShadow": "0 4px 12px rgba(0,0,0,0.1)"
+                                "boxShadow": "0 4px 12px rgba(0,0,0,0.1)",
+                                "touchAction": "none"
                             },
                             children=[
                                 DashCanvas(
@@ -861,6 +864,7 @@ app.layout = html.Div(id="app-container", children=[
                                     lineColor='red',
                                     tool='polygon',
                                     hide_buttons=['line', 'select', 'pan', 'zoom', 'reset'],
+                                    
                                 )
                             ]
                         ),
@@ -1214,6 +1218,8 @@ state = {
 }
 
 
+
+
 @app.callback(
     Output("share-modal", "is_open"),
     Output("session-id-display", "value"),
@@ -1303,10 +1309,72 @@ def show_3d_view(n_clicks):
     if not state["image_orig"]:
         return dbc.Alert("No image loaded. Please upload an image first.", color="warning", dismissable=True, duration=3000)
     
-    return dbc.Alert([
-        html.I(className="bi bi-info-circle me-2"),
-        "3D View feature coming soon! This will allow you to view medical images in 3D perspective."
-    ], color="info", dismissable=True, duration=5000)
+    try:
+        # Get the current processed image or original
+        img = state.get("image_processed") or state["image_orig"]
+        
+        # Convert to grayscale for 3D visualization
+        if img.mode != 'L':
+            img_gray = img.convert('L')
+        else:
+            img_gray = img
+        
+        # Convert to numpy array
+        img_array = np.array(img_gray)
+        
+        # Create coordinate grids
+        height, width = img_array.shape
+        x = np.linspace(0, width-1, width)
+        y = np.linspace(0, height-1, height)
+        x_grid, y_grid = np.meshgrid(x, y)
+        
+        # Create 3D surface plot
+        fig = go.Figure(data=[go.Surface(
+            z=img_array,
+            x=x_grid,
+            y=y_grid,
+            colorscale='Viridis',
+            showscale=True
+        )])
+        
+        fig.update_layout(
+            title='3D Surface View of Image Intensity',
+            scene=dict(
+                xaxis_title='Width (pixels)',
+                yaxis_title='Height (pixels)',
+                zaxis_title='Intensity',
+                camera=dict(
+                    eye=dict(x=1.5, y=1.5, z=1.3)
+                )
+            ),
+            width=800,
+            height=600,
+            margin=dict(l=0, r=0, t=40, b=0)
+        )
+        
+        # Return the 3D plot in a modal or container
+        return dbc.Modal([
+            dbc.ModalHeader(dbc.ModalTitle("3D View")),
+            dbc.ModalBody([
+                dcc.Graph(figure=fig, style={'height': '600px'})
+            ]),
+            dbc.ModalFooter(
+                dbc.Button("Close", id="close-3d-modal", className="ms-auto", n_clicks=0)
+            )
+        ], id="3d-modal", is_open=True, size="xl")
+        
+    except Exception as e:
+        return dbc.Alert(f"Error generating 3D view: {str(e)}", color="danger", dismissable=True, duration=5000)
+
+@app.callback(
+    Output("3d-view-status", "children", allow_duplicate=True),
+    Input("close-3d-modal", "n_clicks"),
+    prevent_initial_call=True
+)
+def close_3d_modal(n_clicks):
+    if n_clicks:
+        return None
+    return dash.no_update
 
 
 @app.callback(
@@ -2124,6 +2192,8 @@ def refresh_radiopaedia_cases(n_clicks):
     cases = get_radiopaedia_cases(state["chat_history"])
     state["radiopaedia_cases"] = cases
     return format_radiopaedia_cases(cases)
+
+
 
 if __name__ == '__main__':
     app.run(debug=True, host='192.168.1.238', port=8050)

@@ -1,0 +1,210 @@
+# Add this JavaScript code to your layout to enable touch support
+
+# 1. First, add this to your app.layout, right after the html.Link for bootstrap icons:
+
+html.Script("""
+document.addEventListener('DOMContentLoaded', function() {
+    function enableTouchForCanvas() {
+        const canvas = document.querySelector('.dash-canvas canvas');
+        if (!canvas) {
+            setTimeout(enableTouchForCanvas, 100);
+            return;
+        }
+        
+        // Prevent default touch behavior
+        canvas.style.touchAction = 'none';
+        
+        // Convert touch events to mouse events
+        function touchToMouse(touchEvent, mouseEventType) {
+            if (touchEvent.touches.length > 1) return; // Ignore multi-touch
+            
+            const touch = touchEvent.touches[0] || touchEvent.changedTouches[0];
+            const mouseEvent = new MouseEvent(mouseEventType, {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                clientX: touch.clientX,
+                clientY: touch.clientY,
+                screenX: touch.screenX,
+                screenY: touch.screenY,
+                button: 0,
+                buttons: mouseEventType === 'mouseup' ? 0 : 1
+            });
+            
+            touchEvent.preventDefault();
+            touch.target.dispatchEvent(mouseEvent);
+        }
+        
+        // Add touch event listeners
+        canvas.addEventListener('touchstart', function(e) {
+            touchToMouse(e, 'mousedown');
+        }, { passive: false });
+        
+        canvas.addEventListener('touchmove', function(e) {
+            touchToMouse(e, 'mousemove');
+        }, { passive: false });
+        
+        canvas.addEventListener('touchend', function(e) {
+            touchToMouse(e, 'mouseup');
+        }, { passive: false });
+        
+        canvas.addEventListener('touchcancel', function(e) {
+            touchToMouse(e, 'mouseup');
+        }, { passive: false });
+        
+        console.log('Touch support enabled for canvas');
+    }
+    
+    enableTouchForCanvas();
+});
+"""),
+
+# 2. Alternative: Add as external JavaScript file
+# Create a file named 'assets/touch_canvas.js' in your app directory:
+# (Dash automatically loads files from the 'assets' folder)
+
+"""
+// assets/touch_canvas.js
+(function() {
+    'use strict';
+    
+    function initTouchCanvas() {
+        const checkCanvas = setInterval(function() {
+            const canvas = document.querySelector('.dash-canvas canvas');
+            
+            if (canvas) {
+                clearInterval(checkCanvas);
+                
+                // Disable default touch actions
+                canvas.style.touchAction = 'none';
+                canvas.style.msTouchAction = 'none';
+                
+                let isDrawing = false;
+                
+                function getTouchPos(canvas, touchEvent) {
+                    const rect = canvas.getBoundingClientRect();
+                    const touch = touchEvent.touches[0] || touchEvent.changedTouches[0];
+                    return {
+                        x: touch.clientX - rect.left,
+                        y: touch.clientY - rect.top
+                    };
+                }
+                
+                function touchStart(e) {
+                    e.preventDefault();
+                    isDrawing = true;
+                    const pos = getTouchPos(canvas, e);
+                    
+                    const mouseEvent = new MouseEvent('mousedown', {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window,
+                        clientX: e.touches[0].clientX,
+                        clientY: e.touches[0].clientY,
+                        button: 0,
+                        buttons: 1
+                    });
+                    canvas.dispatchEvent(mouseEvent);
+                }
+                
+                function touchMove(e) {
+                    if (!isDrawing) return;
+                    e.preventDefault();
+                    
+                    const mouseEvent = new MouseEvent('mousemove', {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window,
+                        clientX: e.touches[0].clientX,
+                        clientY: e.touches[0].clientY,
+                        button: 0,
+                        buttons: 1
+                    });
+                    canvas.dispatchEvent(mouseEvent);
+                }
+                
+                function touchEnd(e) {
+                    e.preventDefault();
+                    isDrawing = false;
+                    
+                    const touch = e.changedTouches[0];
+                    const mouseEvent = new MouseEvent('mouseup', {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window,
+                        clientX: touch.clientX,
+                        clientY: touch.clientY,
+                        button: 0,
+                        buttons: 0
+                    });
+                    canvas.dispatchEvent(mouseEvent);
+                }
+                
+                // Add event listeners
+                canvas.addEventListener('touchstart', touchStart, { passive: false });
+                canvas.addEventListener('touchmove', touchMove, { passive: false });
+                canvas.addEventListener('touchend', touchEnd, { passive: false });
+                canvas.addEventListener('touchcancel', touchEnd, { passive: false });
+                
+                console.log('✓ Touch screen support enabled for canvas');
+            }
+        }, 100);
+        
+        // Stop checking after 10 seconds
+        setTimeout(function() {
+            clearInterval(checkCanvas);
+        }, 10000);
+    }
+    
+    // Initialize when DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initTouchCanvas);
+    } else {
+        initTouchCanvas();
+    }
+})();
+"""
+
+# 3. Update your DashCanvas component to include better mobile support:
+DashCanvas(
+    id='canvas',
+    lineWidth=5,  # Increase line width for touch screens
+    lineColor='red',
+    tool='polygon',
+    hide_buttons=['line', 'select', 'pan', 'zoom', 'reset'],
+    style={
+        'touchAction': 'none',
+        '-ms-touch-action': 'none'
+    }
+)
+
+# 4. Add CSS for better touch interaction (in your layout or assets/style.css):
+html.Style("""
+    .dash-canvas canvas {
+        touch-action: none !important;
+        -ms-touch-action: none !important;
+        cursor: crosshair;
+    }
+    
+    /* Make toolbar buttons larger for touch */
+    .toolbar .btn-sm {
+        padding: 10px 15px !important;
+        font-size: 1rem !important;
+        min-width: 100px;
+    }
+    
+    /* Add visual feedback for touch */
+    .toolbar .btn:active {
+        transform: scale(0.95);
+        background-color: #667eea !important;
+        color: white !important;
+    }
+    
+    /* Prevent text selection while drawing */
+    .dash-canvas {
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+    }
+""")

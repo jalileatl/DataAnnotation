@@ -20,6 +20,7 @@ import dash_bootstrap_components as dbc
 from dotenv import load_dotenv
 import uuid
 import pickle
+import shutil
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -27,6 +28,10 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 SESSIONS_DIR = "sessions"
 if not os.path.exists(SESSIONS_DIR):
     os.makedirs(SESSIONS_DIR)
+
+IMAGE_LIBRARY_PATH = "case"
+if not os.path.exists(IMAGE_LIBRARY_PATH):
+    os.makedirs(IMAGE_LIBRARY_PATH)
 
 def image_to_pil(file_bytes):
     """Convert PNG/JPG bytes to PIL Image."""
@@ -40,8 +45,16 @@ def image_to_pil(file_bytes):
 
 def dicom_to_image(file_bytes):
     try:
-        ds = pydicom.dcmread(io.BytesIO(file_bytes))
+        # Force read DICOM files without proper header
+        ds = pydicom.dcmread(io.BytesIO(file_bytes), force=True)
+        
+        # Check if pixel data exists
+        if not hasattr(ds, 'pixel_array') or ds.pixel_array is None:
+            raise ValueError("DICOM file does not contain pixel data. The file may be corrupted or not a valid DICOM file.")
+            
         arr = ds.pixel_array.astype(float)
+        if arr.ndim == 3:
+            arr = arr[0]  # Take first slice for multi-frame
         if hasattr(ds, 'RescaleSlope') and hasattr(ds, 'RescaleIntercept'):
             arr = arr * float(ds.RescaleSlope) + float(ds.RescaleIntercept)
         if np.nanmin(arr) != np.nanmax(arr):
@@ -457,23 +470,24 @@ def chat_with_openai(prompt, history, image_data=None, api_key=OPENAI_API_KEY):
         """
         messages = [{"role": "system", "content": system_message}]
         messages.extend(history[-6:])
+        
         if image_data:
-            header, encoded = image_data.split(",", 1)
-            messages.append({
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{encoded}",
-                            "detail": "low"
-                        }
-                    }
+            if isinstance(image_data, str) and "|" in image_data:
+                full_image, annotated_image = image_data.split("|")
+                user_content = [
+                    {"type": "text", "text": prompt + "\n\nThe first image is the full original image for overall context (use it hiddenly for knowledge). The second image is the specific annotated region to focus the analysis on."},
+                    {"type": "image_url", "image_url": {"url": full_image, "detail": "low"}},
+                    {"type": "image_url", "image_url": {"url": annotated_image, "detail": "low"}}
                 ]
-            })
+            else:
+                user_content = [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": image_data, "detail": "low"}}
+                ]
+            messages.append({"role": "user", "content": user_content})
         else:
             messages.append({"role": "user", "content": prompt})
+        
         url = "https://api.openai.com/v1/chat/completions"
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         data = {
@@ -596,28 +610,62 @@ app.layout = html.Div(id="app-container", children=[
             ])
         ]),
         
+        # Top toolbar with upload, library, and save buttons
+        dbc.Row([
+            dbc.Col([
+                html.Div(
+                    className="d-flex justify-content-between mb-3",
+                    children=[
+                        html.Div(
+                            className="btn-group",
+                            role="group",
+                            children=[
+                                dcc.Upload(
+                                    id='upload-dicom',
+                                    children=html.Div([
+                                        html.I(className="bi bi-cloud-upload me-2"),
+                                        'Upload Image'
+                                    ]),
+                                    style={
+                                        'width': '100%', 'height': '40px', 'lineHeight': '40px',
+                                        'borderWidth': '1px', 'borderStyle': 'solid', 'borderRadius': '4px',
+                                        'textAlign': 'center', 'borderColor': '#667eea',
+                                        'backgroundColor': '#f8f9fa', 'cursor': 'pointer'
+                                    },
+                                    accept='.dcm,.png,.jpg,.jpeg',
+                                    multiple=False
+                                ),
+                                dbc.Button(
+                                    [html.I(className="bi bi-folder me-2"), "Library"],
+                                    id="library-btn",
+                                    color="secondary",
+                                    outline=True,
+                                    className="ms-2"
+                                ),
+                                dbc.Button(
+                                    [html.I(className="bi bi-save me-2"), "Save to Library"],
+                                    id="save-to-library-btn",
+                                    color="success",
+                                    outline=True,
+                                    className="ms-2"
+                                )
+                            ]
+                        ),
+                        html.Div(
+                            id="save-to-library-status",
+                            className="text-muted small"
+                        )
+                    ]
+                )
+            ])
+        ]),
+        
         dbc.Row([
             dbc.Col(id="left-column", md=9, children=[
                 dbc.Card([
                     dbc.CardHeader("Medical Image Viewer", className="bg-gradient-primary text-white py-2", 
                                  style={"background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", "fontSize": "0.95rem"}),
                     dbc.CardBody([
-                        dcc.Upload(
-                            id='upload-dicom',
-                            children=html.Div([
-                                html.I(className="bi bi-cloud-upload me-2", style={"fontSize": "20px"}),
-                                'Drag and Drop or ', 
-                                html.A('Select a DICOM, PNG, or JPG file', style={"fontWeight": "bold", "color": "#667eea"})
-                            ]),
-                            style={
-                                'width': '100%', 'height': '60px', 'lineHeight': '60px',
-                                'borderWidth': '2px', 'borderStyle': 'dashed', 'borderRadius': '8px',
-                                'textAlign': 'center', 'marginBottom': '15px', 'borderColor': '#667eea',
-                                'backgroundColor': '#f8f9fa', 'transition': 'all 0.3s ease', 'fontSize': '0.9rem'
-                            },
-                            accept='.dcm,.png,.jpg,.jpeg'
-                        ),
-                        
                         html.Div(
                             className="toolbar mb-2 p-2 rounded border",
                             style={"overflowX": "auto", "whiteSpace": "nowrap", "backgroundColor": "#f8f9fa",
@@ -703,7 +751,6 @@ app.layout = html.Div(id="app-container", children=[
     title="Add Label Annotation",
     style={"fontSize": "0.8rem"}
 ),
-
 
                                     ]
                                 ),
@@ -854,8 +901,7 @@ app.layout = html.Div(id="app-container", children=[
                                 "border": "2px solid #e0e0e0",
                                 "borderRadius": "8px",
                                 "position": "relative",
-                                "boxShadow": "0 4px 12px rgba(0,0,0,0.1)",
-                                "touchAction": "none"
+                                "boxShadow": "0 4px 12px rgba(0,0,0,0.1)"
                             },
                             children=[
                                 DashCanvas(
@@ -864,7 +910,6 @@ app.layout = html.Div(id="app-container", children=[
                                     lineColor='red',
                                     tool='polygon',
                                     hide_buttons=['line', 'select', 'pan', 'zoom', 'reset'],
-                                    
                                 )
                             ]
                         ),
@@ -1114,7 +1159,19 @@ app.layout = html.Div(id="app-container", children=[
             dbc.ModalFooter([
                 dbc.Button("Close", id="close-share-modal", color="secondary", size="sm")
             ])
-        ], id="share-modal", is_open=False, centered=True, size="lg")
+        ], id="share-modal", is_open=False, centered=True, size="lg"),
+        
+        dbc.Offcanvas(
+            [
+                html.H5("Image Library"),
+                dcc.Dropdown(id="library-select", options=[], placeholder="Select an image", style={"marginBottom": "10px"}),
+                html.Div(id="library-load-status")
+            ],
+            id="library-offcanvas",
+            title="Case Library",
+            is_open=False,
+            placement="start"
+        )
     ], fluid=True),
     
     html.Div(
@@ -1170,7 +1227,8 @@ app.layout = html.Div(id="app-container", children=[
                             dbc.Button("SEND", id="send-chat", color="success", size="sm", className="w-100 mt-2")
                         ])
                     ])
-                ], style={"padding": "15px"})
+                ], style={"padding": "15px"}
+            )
             ], style={
                 "position": "fixed",
                 "bottom": "30px",
@@ -1217,8 +1275,95 @@ state = {
     "session_id": None
 }
 
-
-
+# Add callback for saving to library
+@app.callback(
+    Output("save-to-library-status", "children"),
+    Input("save-to-library-btn", "n_clicks"),
+    prevent_initial_call=True
+)
+def save_to_library(n_clicks):
+    if not n_clicks:
+        return dash.no_update
+    
+    if not state["image_orig"]:
+        return dbc.Alert("No image loaded. Please upload an image first.", color="warning", dismissable=True, duration=3000)
+    
+    try:
+        # Generate a unique filename if not already set
+        if not state["filename"]:
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            file_ext = state["file_type"] if state["file_type"] else "png"
+            filename = f"saved_image_{timestamp}.{file_ext}"
+        else:
+            filename = state["filename"]
+        
+        # Save the image to the library
+        save_path = os.path.join(IMAGE_LIBRARY_PATH, filename)
+        
+        # Debug information
+        print(f"Saving file: {filename}")
+        print(f"File type: {state['file_type']}")
+        print(f"Has original bytes: {state['file_bytes'] is not None}")
+        
+        # If it's a DICOM file, save the original bytes
+        if state["file_type"] == "dcm":
+            if state["file_bytes"]:
+                # Save original DICOM bytes
+                with open(save_path, 'wb') as f:
+                    f.write(state["file_bytes"])
+                print(f"Saved original DICOM bytes to {save_path}")
+            else:
+                # If no original bytes, create a new DICOM file
+                # This is a fallback - not ideal but better than nothing
+                print("No original DICOM bytes available, creating new DICOM")
+                # Convert PIL image back to DICOM format
+                img_array = np.array(state["image_orig"])
+                if img_array.ndim == 3:
+                    img_array = img_array[:, :, 0]  # Take first channel
+                
+                # Create a minimal DICOM dataset
+                ds = pydicom.Dataset()
+                ds.PatientName = "Saved Patient"
+                ds.PatientID = "12345"
+                ds.StudyInstanceUID = "1.2.3"
+                ds.SeriesInstanceUID = "1.2.3.1"
+                ds.SOPInstanceUID = "1.2.3.1.1"
+                ds.SOPClassUID = "1.2.840.10008.5.1.4.1.1.2"  # CT Image Storage
+                ds.Modality = "CT"
+                ds.Rows = img_array.shape[0]
+                ds.Columns = img_array.shape[1]
+                ds.BitsAllocated = 16
+                ds.BitsStored = 16
+                ds.HighBit = 15
+                ds.PixelRepresentation = 0
+                ds.SamplesPerPixel = 1
+                ds.PhotometricInterpretation = "MONOCHROME2"
+                ds.PixelData = img_array.astype(np.uint16).tobytes()
+                
+                # Save the new DICOM file
+                ds.save_as(save_path)
+                print(f"Created new DICOM file at {save_path}")
+        else:
+            # For non-DICOM files, save as PNG
+            img_bytes = io.BytesIO()
+            state["image_orig"].save(img_bytes, format="PNG")
+            img_bytes.seek(0)
+            
+            with open(save_path, 'wb') as f:
+                f.write(img_bytes.read())
+            print(f"Saved PNG file to {save_path}")
+        
+        # Verify the file was saved correctly
+        if os.path.exists(save_path):
+            file_size = os.path.getsize(save_path)
+            print(f"File saved successfully. Size: {file_size} bytes")
+            return dbc.Alert(f"Image saved to library as {filename} ({file_size} bytes)", color="success", dismissable=True, duration=3000)
+        else:
+            return dbc.Alert("Error: File was not saved to library", color="danger", dismissable=True, duration=5000)
+    
+    except Exception as e:
+        print(f"Error saving to library: {str(e)}")
+        return dbc.Alert(f"Error saving to library: {str(e)}", color="danger", dismissable=True, duration=5000)
 
 @app.callback(
     Output("share-modal", "is_open"),
@@ -1650,20 +1795,13 @@ def load_image(contents, filename):
             modality = file_ext.upper()
             patient_id = "N/A"
         elif file_ext == 'dcm':
-            ds = pydicom.dcmread(io.BytesIO(file_bytes))
-            if hasattr(ds, 'NumberOfSlices') and ds.NumberOfSlices > 1:
-                state["total_slices"] = ds.NumberOfSlices
-                state["current_slice"] = 0
-                img_orig, _ = dicom_to_image(file_bytes)
-                state["image_slices"] = [img_orig]
-            else:
-                img_orig, ds = dicom_to_image(file_bytes)
-                state["total_slices"] = 1
-                state["current_slice"] = 0
-                state["image_slices"] = [img_orig]
+            img_orig, ds = dicom_to_image(file_bytes)
             state["file_type"] = "dcm"
             modality = getattr(ds, 'Modality', 'DICOM')
             patient_id = getattr(ds, 'PatientID', 'Unknown')
+            state["total_slices"] = 1
+            state["current_slice"] = 0
+            state["image_slices"] = [img_orig]
         else:
             return dash.no_update, dash.no_update, dash.no_update, f"❌ Unsupported file type: {file_ext}", {"display": "none"}
         
@@ -1695,6 +1833,112 @@ def load_image(contents, filename):
     except Exception as e:
         return dash.no_update, dash.no_update, dash.no_update, f"❌ Error: {e}", {"display": "none"}
 
+@app.callback(
+    Output("library-offcanvas", "is_open"),
+    Input("library-btn", "n_clicks"),
+    State("library-offcanvas", "is_open"),
+    prevent_initial_call=True
+)
+def toggle_library(n, is_open):
+    if n:
+        return not is_open
+    return is_open
+
+@app.callback(
+    Output("library-select", "options"),
+    Input("library-offcanvas", "is_open"),
+    prevent_initial_call=True
+)
+def update_library_options(is_open):
+    if is_open:
+        try:
+            files = [f for f in os.listdir(IMAGE_LIBRARY_PATH) if f.lower().endswith(('.dcm', '.png', '.jpg', '.jpeg'))]
+            return [{"label": f, "value": f} for f in files]
+        except:
+            return []
+    return []
+
+@app.callback(
+    Output('canvas', 'image_content', allow_duplicate=True),
+    Output('canvas', 'width', allow_duplicate=True),
+    Output('canvas', 'height', allow_duplicate=True),
+    Output('upload-info', 'children', allow_duplicate=True),
+    Output('slice-navigator-row', 'style', allow_duplicate=True),
+    Output("library-offcanvas", "is_open", allow_duplicate=True),
+    Output("library-load-status", "children"),
+    Input("library-select", "value"),
+    prevent_initial_call=True
+)
+def load_from_library(filename):
+    if not filename:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    try:
+        full_path = os.path.join(IMAGE_LIBRARY_PATH, filename)
+        print(f"Loading from library: {full_path}")
+        
+        with open(full_path, 'rb') as f:
+            file_bytes = f.read()
+        
+        file_ext = filename.lower().split('.')[-1]
+        print(f"File extension: {file_ext}")
+        print(f"File size: {len(file_bytes)} bytes")
+        
+        if file_ext in ['png', 'jpg', 'jpeg']:
+            img_orig = Image.open(io.BytesIO(file_bytes))
+            if img_orig.mode != 'RGB':
+                img_orig = img_orig.convert('RGB')
+            ds = None
+            state["file_type"] = file_ext
+            modality = file_ext.upper()
+            patient_id = "N/A"
+        elif file_ext == 'dcm':
+            # Try to read as DICOM
+            try:
+                img_orig, ds = dicom_to_image(file_bytes)
+                state["file_type"] = "dcm"
+                modality = getattr(ds, 'Modality', 'DICOM')
+                patient_id = getattr(ds, 'PatientID', 'Unknown')
+                print(f"Successfully loaded DICOM: {modality}")
+            except Exception as dicom_error:
+                print(f"DICOM load failed: {str(dicom_error)}")
+                # Try to load as image instead (in case it was saved as PNG with .dcm extension)
+                try:
+                    img_orig = Image.open(io.BytesIO(file_bytes))
+                    if img_orig.mode != 'RGB':
+                        img_orig = img_orig.convert('RGB')
+                    ds = None
+                    state["file_type"] = "png"  # It's actually a PNG
+                    modality = "IMAGE"
+                    patient_id = "N/A"
+                    print("Loaded as image instead of DICOM")
+                except Exception as img_error:
+                    raise ValueError(f"Failed to load file as both DICOM and image: DICOM error: {str(dicom_error)}, Image error: {str(img_error)}")
+        else:
+            return dash.no_update, dash.no_update, dash.no_update, f"Unsupported file type: {file_ext}", dash.no_update, dash.no_update, "Unsupported file"
+        
+        img_disp, disp_size = resize_for_display(img_orig)
+        state.update({
+            "file_bytes": file_bytes,
+            "ds": ds,
+            "image_orig": img_orig,
+            "image_display": img_disp,
+            "disp_size": disp_size,
+            "current_mask": None,
+            "text_annotations": [],
+            "eraser_strokes": [],
+            "zoom_level": 1.0,
+            "rotation": 0,
+            "flip_horizontal": False,
+            "flip_vertical": False,
+            "filename": filename,
+            "image_b64": pil_to_b64(img_disp),
+        })
+        info = f"Loaded from library: {filename} | Type: {modality} | Patient: {patient_id} | Size: {img_orig.size[0]}x{img_orig.size[1]}"
+        navigator_style = {"display": "none"}  # Assuming single slice
+        return state["image_b64"], disp_size[0], disp_size[1], info, navigator_style, False, "Loaded successfully"
+    except Exception as e:
+        print(f"Error loading from library: {str(e)}")
+        return dash.no_update, dash.no_update, dash.no_update, f"Error: {str(e)}", dash.no_update, dash.no_update, f"Error: {str(e)}"
 @app.callback(
     Output("canvas", "image_content", allow_duplicate=True),
     Input("add-text-modal-btn", "n_clicks"),
@@ -2131,7 +2375,7 @@ def handle_chat_and_analysis(send_click, analyze_click, text_value, json_mask, c
             
             reply = chat_with_openai(prompt, state["chat_history"], b64)
         else:
-            # Analyze annotated region
+            # Analyze annotated region, send full hiddenly
             stats = compute_mask_stats(mask_array)
             bbox_disp = stats.get("bbox")
             
@@ -2152,17 +2396,20 @@ def handle_chat_and_analysis(send_click, analyze_click, text_value, json_mask, c
                 ], className="p-2 mb-2 bg-primary text-white rounded"))
                 return children, "", cases_html
             
-            b64 = pil_to_b64(cropped)
+            full_b64 = state["image_b64"]
+            cropped_b64 = pil_to_b64(cropped)
+            image_data = full_b64 + "|" + cropped_b64
+            
             children.append(html.Div([
                 html.Strong("You:"),
                 html.P(f"{prompt} (Annotated region)", style={"fontSize": "0.85rem"})
             ], className="d-flex justify-content-end mb-2"))
             
             children.append(html.Div([
-                html.Img(src=b64, style={"maxWidth": "100%", "borderRadius": "6px", "marginBottom": "8px"})
+                html.Img(src=cropped_b64, style={"maxWidth": "100%", "borderRadius": "6px", "marginBottom": "8px"})
             ]))
             
-            reply = chat_with_openai(prompt, state["chat_history"], b64)
+            reply = chat_with_openai(prompt, state["chat_history"], image_data)
         
         state["chat_history"].append({"role": "user", "content": prompt})
         state["chat_history"].append({"role": "assistant", "content": reply})
@@ -2192,8 +2439,6 @@ def refresh_radiopaedia_cases(n_clicks):
     cases = get_radiopaedia_cases(state["chat_history"])
     state["radiopaedia_cases"] = cases
     return format_radiopaedia_cases(cases)
-
-
 
 if __name__ == '__main__':
     app.run(debug=True, host='192.168.1.238', port=8050)

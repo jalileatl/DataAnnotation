@@ -3,6 +3,8 @@ from dash import html, dcc, Input, Output, State, callback_context
 from dash_canvas import DashCanvas
 from dash_canvas.utils import parse_jsonstring
 import pydicom
+import plotly.graph_objects as go
+
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 if not hasattr(np, 'bool'):
@@ -18,6 +20,7 @@ import dash_bootstrap_components as dbc
 from dotenv import load_dotenv
 import uuid
 import pickle
+import shutil
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -25,6 +28,15 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 SESSIONS_DIR = "sessions"
 if not os.path.exists(SESSIONS_DIR):
     os.makedirs(SESSIONS_DIR)
+
+IMAGE_LIBRARY_PATH = "case"
+if not os.path.exists(IMAGE_LIBRARY_PATH):
+    os.makedirs(IMAGE_LIBRARY_PATH)
+
+# Create a directory for thumbnails if it doesn't exist
+THUMBNAILS_DIR = os.path.join(IMAGE_LIBRARY_PATH, "thumbnails")
+if not os.path.exists(THUMBNAILS_DIR):
+    os.makedirs(THUMBNAILS_DIR)
 
 def image_to_pil(file_bytes):
     """Convert PNG/JPG bytes to PIL Image."""
@@ -38,8 +50,16 @@ def image_to_pil(file_bytes):
 
 def dicom_to_image(file_bytes):
     try:
-        ds = pydicom.dcmread(io.BytesIO(file_bytes))
+        # Force read DICOM files without proper header
+        ds = pydicom.dcmread(io.BytesIO(file_bytes), force=True)
+        
+        # Check if pixel data exists
+        if not hasattr(ds, 'pixel_array') or ds.pixel_array is None:
+            raise ValueError("DICOM file does not contain pixel data. The file may be corrupted or not a valid DICOM file.")
+            
         arr = ds.pixel_array.astype(float)
+        if arr.ndim == 3:
+            arr = arr[0]  # Take first slice for multi-frame
         if hasattr(ds, 'RescaleSlope') and hasattr(ds, 'RescaleIntercept'):
             arr = arr * float(ds.RescaleSlope) + float(ds.RescaleIntercept)
         if np.nanmin(arr) != np.nanmax(arr):
@@ -60,6 +80,46 @@ def resize_for_display(img, max_size=500):
         new_h = max_size
         new_w = int(max_size * w / h)
     return img.resize((new_w, new_h), Image.Resampling.BILINEAR), (new_w, new_h)
+
+def create_thumbnail(img_path, thumbnail_path, size=(150, 150)):
+    """Create a thumbnail for an image and save it to the thumbnail path."""
+    try:
+        # Check if thumbnail already exists
+        if os.path.exists(thumbnail_path):
+            return True
+            
+        # Determine file type
+        file_ext = os.path.basename(img_path).lower().split('.')[-1]
+        
+        # Process the image based on its type
+        if file_ext in ['png', 'jpg', 'jpeg']:
+            img = Image.open(img_path)
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+        elif file_ext == 'dcm':
+            with open(img_path, 'rb') as f:
+                file_bytes = f.read()
+            img, _ = dicom_to_image(file_bytes)
+        else:
+            return False
+            
+        # Create and save thumbnail
+        img.thumbnail(size, Image.Resampling.LANCZOS)
+        img.save(thumbnail_path, "JPEG")
+        return True
+    except Exception as e:
+        print(f"Error creating thumbnail for {img_path}: {e}")
+        return False
+
+def get_thumbnail_base64(thumbnail_path):
+    """Convert a thumbnail image to base64 string."""
+    try:
+        with open(thumbnail_path, "rb") as image_file:
+            encoded_string = base64.b64encode(image_file.read()).decode()
+        return f"data:image/jpeg;base64,{encoded_string}"
+    except Exception as e:
+        print(f"Error converting thumbnail to base64: {e}")
+        return None
 
 def pil_to_b64(img):
     buf = io.BytesIO()
@@ -451,27 +511,30 @@ def chat_with_openai(prompt, history, image_data=None, api_key=OPENAI_API_KEY):
         2. Observations
         3. Recommendations
         4. Teaching Points
+        5. Conclusion
+        6.keywords for Radiopaedia search in one word
         Use bullet points.
         """
         messages = [{"role": "system", "content": system_message}]
         messages.extend(history[-6:])
+        
         if image_data:
-            header, encoded = image_data.split(",", 1)
-            messages.append({
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{encoded}",
-                            "detail": "low"
-                        }
-                    }
+            if isinstance(image_data, str) and "|" in image_data:
+                full_image, annotated_image = image_data.split("|")
+                user_content = [
+                    {"type": "text", "text": prompt + "\n\nThe first image is the full original image for overall context (use it hiddenly for knowledge). The second image is the specific annotated region to focus the analysis on."},
+                    {"type": "image_url", "image_url": {"url": full_image, "detail": "low"}},
+                    {"type": "image_url", "image_url": {"url": annotated_image, "detail": "low"}}
                 ]
-            })
+            else:
+                user_content = [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": image_data, "detail": "low"}}
+                ]
+            messages.append({"role": "user", "content": user_content})
         else:
             messages.append({"role": "user", "content": prompt})
+        
         url = "https://api.openai.com/v1/chat/completions"
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         data = {
@@ -492,7 +555,7 @@ def get_radiopaedia_cases(conversation, api_key=OPENAI_API_KEY):
     try:
         recent_messages = conversation[-4:] if len(conversation) >= 4 else conversation
         extract_prompt = """
-        Based on this medical imaging conversation, extract 3-5 key medical terms or conditions that would be useful for finding similar cases on Radiopaedia.
+        Based on this medical imaging conversation, extract key-point  medical terms or conditions that would be useful for finding similar cases on Radiopaedia.
         Return only the terms, one per line, without any additional text.
         
         Conversation:
@@ -567,8 +630,112 @@ def format_chat_text(text):
             children.append(html.Br())
     return children
 
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.FLATLY], suppress_callback_exceptions=True)
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.FLATLY], suppress_callback_exceptions=True,title="Radiology Practice")
 server = app.server
+
+# Function to create library thumbnails
+def create_library_thumbnails():
+    """Create thumbnail cards for all images in the library."""
+    try:
+        files = [f for f in os.listdir(IMAGE_LIBRARY_PATH) 
+                if f.lower().endswith(('.dcm', '.png', '.jpg', '.jpeg')) and f != 'thumbnails']
+        
+        if not files:
+            return html.P("No images in library.", className="text-muted")
+        
+        thumbnail_cards = []
+        
+        for filename in files:
+            file_path = os.path.join(IMAGE_LIBRARY_PATH, filename)
+            file_ext = filename.lower().split('.')[-1]
+            
+            # Create thumbnail if needed
+            thumbnail_name = f"{os.path.splitext(filename)[0]}.jpg"
+            thumbnail_path = os.path.join(THUMBNAILS_DIR, thumbnail_name)
+            
+            if not os.path.exists(thumbnail_path):
+                create_thumbnail(file_path, thumbnail_path)
+            
+            # Get thumbnail as base64
+            thumbnail_b64 = get_thumbnail_base64(thumbnail_path)
+            
+            if thumbnail_b64:
+                # Create individual card for each image
+                card = html.Div(
+                    [
+                        html.Img(
+                            src=thumbnail_b64,
+                            id={"type": "library-thumbnail", "index": filename},
+                            style={
+                                "height": "120px",
+                                "width": "100%",
+                                "objectFit": "contain",
+                                "borderRadius": "8px",
+                                "marginBottom": "10px",
+                                "cursor": "pointer",
+                            },
+                            title=filename
+                        ),
+                        html.Div(
+                            [
+                                html.P(
+                                    filename,
+                                    style={
+                                        "fontSize": "0.75rem",
+                                        "marginBottom": "5px",
+                                        "overflow": "hidden",
+                                        "textOverflow": "ellipsis",
+                                        "whiteSpace": "nowrap",
+                                        "width": "100%",
+                                        "border-left": "solid 2px #9857f8",
+                                        "border-right": "solid 2px #9857f8",
+                                        "border-radius": "20px",
+                                    }
+                                ),
+                                dbc.Button(
+                                    "Load",
+                                    id={"type": "library-load-btn", "index": filename},
+                                    color="primary",
+                                    size="sm",
+                                    className="w-100",
+                                    style={
+                                        "backgroundColor": "#5409c3",
+                                        "font-size": "17px",
+                                        "border": "dashed 1px #8b3dff",
+                                        "border-radius": "30px",
+                                        "padding": "3px",
+                                    }
+                                )
+                            ],
+                            style={
+                                "width": "100%",
+                                "backgroundColor": "#1d063f",
+                                "padding": "10px",
+                                "border-top": "1px dashed #4b4b4b",
+                                "color": "#fff",
+                                "textAlign": "center",
+                            }
+                        )
+                    ],
+                    style={
+                        "minWidth": "150px",
+                        "flexShrink": "0",
+                        "display": "flex",
+                        "flexDirection": "column",
+                        "alignItems": "center",
+                        "margin": "10px",
+                        "backgroundColor": "#000",
+                        "border": "2px solid #22ac39d",
+                    }
+                )
+                
+                thumbnail_cards.append(card)
+        
+        return thumbnail_cards
+    
+    except Exception as e:
+        print(f"Error creating library thumbnails: {e}")
+        return html.P(f"Error: {str(e)}", className="text-danger")
 
 app.layout = html.Div(id="app-container", children=[
     html.Link(
@@ -585,40 +752,84 @@ app.layout = html.Div(id="app-container", children=[
                         value=False,
                         className="float-end"
                     ),
-                    html.H1("Medical Image Annotation Dashboard", className="text-center my-2", 
+                    html.H1("Radiology Image Annotation Dashboard", className="text-center my-2", 
                            style={"fontWeight": "700", "fontSize": "1.5rem", "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
                                   "WebkitBackgroundClip": "text", "WebkitTextFillColor": "transparent"}),
-                    html.P("Medical image annotation and analysis platform", 
-                           className="text-center mb-2", style={"fontSize": "0.9rem"})
+                    html.P("Radiology image annotation and analysis platform", 
+                           className="text-center mb-2", style={"fontSize": "0.9rem","marginRight": "120px"})
                 ])
             ])
         ]),
         
+        # Top toolbar with upload, library, and save buttons
         dbc.Row([
+            dbc.Col([
+                html.Div(
+                    className="d-flex justify-content-between mb-3",
+                    children=[
+                        html.Div(
+                            className="btn-group",
+                            role="group",
+                            children=[
+                               dcc.Upload(
+    id='upload-dicom',
+    children=html.Div([
+        html.I(className="bi bi-cloud-upload me-2"),
+        'Upload Image'
+    ]),
+    style={
+        'width': '100%',
+        'height': '40px',
+        'lineHeight': '40px',
+        'borderWidth': '1px',
+        'borderStyle': 'solid',
+        'borderRadius': '4px',
+        'textAlign': 'center',
+        'borderColor': '#667eea',
+        'cursor': 'pointer',
+        'fontWeight': '500',
+        # ✅ colors visible in both modes
+        'backgroundColor': 'var(--bs-body-bg)',  # adapts with theme
+        'color': 'var(--bs-body-color)',        
+    },
+    accept='.dcm,.png,.jpg,.jpeg',
+    multiple=False
+)
+,
+                                dbc.Button(
+                                    [html.I(className="bi bi-folder me-2"), "Library"],
+                                    id="library-btn",
+                                    color="secondary",
+                                    outline=True,
+                                    className="ms-2"
+                                ),
+                                dbc.Button(
+                                    [html.I(className="bi bi-save me-2"), "Save to Library"],
+                                    id="save-to-library-btn",
+                                    color="success",
+                                    outline=True,
+                                    className="ms-2"
+                                )
+                            ]
+                        ),
+                        html.Div(
+                            id="save-to-library-status",
+                            className="text-muted small"
+                        )
+                    ]
+                )
+            ])
+        ]),
+        
+        dbc.Row([                     
             dbc.Col(id="left-column", md=9, children=[
                 dbc.Card([
                     dbc.CardHeader("Medical Image Viewer", className="bg-gradient-primary text-white py-2", 
                                  style={"background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", "fontSize": "0.95rem"}),
                     dbc.CardBody([
-                        dcc.Upload(
-                            id='upload-dicom',
-                            children=html.Div([
-                                html.I(className="bi bi-cloud-upload me-2", style={"fontSize": "20px"}),
-                                'Drag and Drop or ', 
-                                html.A('Select a DICOM, PNG, or JPG file', style={"fontWeight": "bold", "color": "#667eea"})
-                            ]),
-                            style={
-                                'width': '100%', 'height': '60px', 'lineHeight': '60px',
-                                'borderWidth': '2px', 'borderStyle': 'dashed', 'borderRadius': '8px',
-                                'textAlign': 'center', 'marginBottom': '15px', 'borderColor': '#667eea',
-                                'backgroundColor': '#f8f9fa', 'transition': 'all 0.3s ease', 'fontSize': '0.9rem'
-                            },
-                            accept='.dcm,.png,.jpg,.jpeg'
-                        ),
-                        
                         html.Div(
                             className="toolbar mb-2 p-2 rounded border",
-                            style={"overflowX": "auto", "whiteSpace": "nowrap", "backgroundColor": "#f8f9fa",
+                            style={"overflowX": "auto",  "whiteSpace": "nowrap", "backgroundColor": "#f8f9fa",
                                    "boxShadow": "0 2px 6px rgba(0,0,0,0.08)"},
                             children=[
                                 html.Div(
@@ -633,7 +844,7 @@ app.layout = html.Div(id="app-container", children=[
                                             size="sm",
                                             className="px-2",
                                             title="Polygon Tool",
-                                            style={"fontSize": "0.8rem"}
+                                            style={"fontSize": "0.8rem","display": "none"}
                                         ),
                                         dbc.Button(
                                             [html.I(className="bi bi-square me-1"), "Rectangle"],
@@ -683,7 +894,7 @@ app.layout = html.Div(id="app-container", children=[
                                             size="sm",
                                             className="px-2",
                                             title="Eraser Tool",
-                                            style={"fontSize": "0.8rem"}
+                                            style={"fontSize": "0.8rem","display": "none"}
                                         ),
                                     ]
                                 ),
@@ -701,7 +912,6 @@ app.layout = html.Div(id="app-container", children=[
     title="Add Label Annotation",
     style={"fontSize": "0.8rem"}
 ),
-
 
                                     ]
                                 ),
@@ -792,16 +1002,6 @@ app.layout = html.Div(id="app-container", children=[
                                     role="group",
                                     children=[
                                         dbc.Button(
-                                            [html.I(className="bi bi-share me-1"), "Share"],
-                                            id="share-btn",
-                                            color="info",
-                                            outline=True,
-                                            size="sm",
-                                            className="px-2",
-                                            title="Share Session",
-                                            style={"fontSize": "0.8rem"}
-                                        ),
-                                        dbc.Button(
                                             [html.I(className="bi bi-box me-1"), "3D View"],
                                             id="3d-view-btn",
                                             color="secondary",
@@ -844,26 +1044,104 @@ app.layout = html.Div(id="app-container", children=[
                             ])
                         ]),
                         
-                        html.Div(
-                            id="image-container",
-                            style={
-                                "overflow": "auto",
-                                "maxHeight": "650px",
-                                "border": "2px solid #e0e0e0",
-                                "borderRadius": "8px",
-                                "position": "relative",
-                                "boxShadow": "0 4px 12px rgba(0,0,0,0.1)"
-                            },
-                            children=[
-                                DashCanvas(
-                                    id='canvas',
-                                    lineWidth=3,
-                                    lineColor='red',
-                                    tool='polygon',
-                                    hide_buttons=['line', 'select', 'pan', 'zoom', 'reset'],
-                                )
-                            ]
-                        ),
+                   dbc.Row([
+    html.Div(
+        id="image-container",
+        className="col-md-9",
+        style={
+            "overflow": "auto",
+            "height": "550px",
+            "border": "2px solid #e0e0e0",
+            "borderRadius": "8px",
+            "position": "relative",
+            "backgroundColor": "#000000",
+            "boxShadow": "0 4px 12px rgba(0,0,0,0.1)" 
+        },
+        children=[
+            DashCanvas(
+                id='canvas',
+                lineWidth=3,
+                lineColor='red',
+                tool='polygon',
+                hide_buttons=['line', 'select', 'pan', 'zoom', 'reset'],
+            ),
+        ]
+    ),
+    html.Div(
+        className="col-md-3",
+        style={
+            "padding": "10px",
+            "border": "1px solid #e0e0e0",
+            "borderRadius": "8px",
+            "backgroundColor": "#f8f9fa",
+            "position": "relative",
+        },
+        children=[
+            html.Div(
+                [
+                    # Left arrow button
+                    html.Button(
+                        html.I(className="bi bi-chevron-left", style={"fontSize": "15px"}),
+                        id="carousel-prev-btn",
+                        n_clicks=0,
+                        style={
+                            "background": "none",
+                            "border": "none",
+                            "cursor": "pointer",
+                            "color": "var(--bs-body-color)",
+                            "zIndex": "10",
+                            "position": "absolute",
+                            "top": "14px",
+                            "left": "1px",
+                            "transform": "rotate(90deg)",
+                            "width": "20px",
+                            "height": "20px",
+                            "display": "grid",
+                            "border-radius": "40px",
+                            "color": "var(--bs-body-color)",
+                    
+                        }
+                    ),
+                    # Image container with horizontal scroll
+                    html.Div(
+                        id="library-thumbnails",
+                        children=create_library_thumbnails(),  # Populate on initial load
+                        style={
+                            "overflowX": "auto",   
+                            "maxHeight": "550px",
+                            "display": "block"  # Make it visible by default
+                        }
+                    ),
+                    # Right arrow button
+                    html.Button(
+                        html.I(className="bi bi-chevron-right", style={"fontSize": "15px"}),
+                        id="carousel-next-btn",
+                        n_clicks=0,
+                        style={
+                            "background": "none",
+                            "border": "none",
+                            "cursor": "pointer",
+                            "color": "var(--bs-body-color)",
+                            "zIndex": "10",
+                            "position": "absolute",
+                            "bottom": "14px",
+                            "left": "1px",
+                            "transform": "rotate(90deg)",
+                            "width": "20px",
+                            "height": "20px",
+                            "display": "grid",
+                            "border-radius": "40px",
+                            "color": "var(--bs-body-color)",
+                        }
+                    ),
+                ],
+            ),
+            html.Div(id="library-load-status", className="text-muted small", style={"fontSize": "0.8rem"})
+        ]
+    ),
+]),
+                        
+      
                         
                         dbc.Row(id="slice-navigator-row", style={"display": "none"}, children=[
                             dbc.Col([
@@ -916,7 +1194,7 @@ app.layout = html.Div(id="app-container", children=[
                                 html.I(className="bi bi-file-earmark-text me-1"),
                                 "Generate Report"
                             ], id="report-btn", color="primary", size="sm", className="w-100 mt-2",
-                            style={"fontWeight": "600", "padding": "8px", "fontSize": "0.8rem"}),
+                            style={"fontWeight": "600", "padding": "8px", "fontSize": "0.8rem","display": "none"}),
                             dcc.Download(id="download-annotation"),
                             dcc.Download(id="download-report")
                         ])
@@ -1110,8 +1388,14 @@ app.layout = html.Div(id="app-container", children=[
             dbc.ModalFooter([
                 dbc.Button("Close", id="close-share-modal", color="secondary", size="sm")
             ])
-        ], id="share-modal", is_open=False, centered=True, size="lg")
-    ], fluid=True),
+        ], id="share-modal", is_open=False, centered=True, size="lg"),
+        
+
+
+  ], fluid=True),
+
+
+
     
     html.Div(
         id="chat-float-button",
@@ -1166,7 +1450,8 @@ app.layout = html.Div(id="app-container", children=[
                             dbc.Button("SEND", id="send-chat", color="success", size="sm", className="w-100 mt-2")
                         ])
                     ])
-                ], style={"padding": "15px"})
+                ], style={"padding": "15px"}
+            )
             ], style={
                 "position": "fixed",
                 "bottom": "30px",
@@ -1175,7 +1460,8 @@ app.layout = html.Div(id="app-container", children=[
                 "maxHeight": "550px",
                 "zIndex": "1001",
                 "boxShadow": "0 8px 24px rgba(0,0,0,0.3)",
-                "borderRadius": "8px"
+                "borderRadius": "8px",
+                
             })
         ]
     )
@@ -1213,6 +1499,88 @@ state = {
     "session_id": None
 }
 
+# Add callback for saving to library
+@app.callback(
+    Output("save-to-library-status", "children"),
+    Input("save-to-library-btn", "n_clicks"),
+    prevent_initial_call=True
+)
+def save_to_library(n_clicks):
+    if not n_clicks:
+        return dash.no_update
+    
+    if not state["image_orig"]:
+        return dbc.Alert("No image loaded. Please upload an image first.", color="warning", dismissable=True, duration=3000)
+    
+    try:
+        # Generate a unique filename if not already set
+        if not state["filename"]:
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            file_ext = state["file_type"] if state["file_type"] else "png"
+            filename = f"saved_image_{timestamp}.{file_ext}"
+        else:
+            filename = state["filename"]
+        
+        # Ensure library directory exists
+        os.makedirs(IMAGE_LIBRARY_PATH, exist_ok=True)
+        os.makedirs(THUMBNAILS_DIR, exist_ok=True)
+        
+        save_path = os.path.join(IMAGE_LIBRARY_PATH, filename)
+        
+        print(f"Saving file: {filename}")
+        print(f"File type: {state['file_type']}")
+        print(f"Has original bytes: {state['file_bytes'] is not None}")
+        
+        # If it's a DICOM file, save the original bytes
+        if state["file_type"] == "dcm":
+            if state["file_bytes"]:
+                with open(save_path, 'wb') as f:
+                    f.write(state["file_bytes"])
+                print(f"Saved original DICOM bytes to {save_path}")
+            else:
+                return dbc.Alert("Error: No original DICOM data available to save.", color="danger", dismissable=True, duration=5000)
+        else:
+            # For non-DICOM files, save as PNG
+            img_bytes = io.BytesIO()
+            state["image_orig"].save(img_bytes, format="PNG")
+            img_bytes.seek(0)
+            
+            with open(save_path, 'wb') as f:
+                f.write(img_bytes.read())
+            print(f"Saved PNG file to {save_path}")
+        
+        # Create a thumbnail for the saved image using the current display image
+        thumbnail_path = os.path.join(THUMBNAILS_DIR, f"{os.path.splitext(filename)[0]}.jpg")
+        
+        try:
+            # Use the current image_display (which is already rendered) for thumbnail
+            if state["image_display"]:
+                img_for_thumbnail = state["image_display"]
+            else:
+                img_for_thumbnail = state["image_orig"]
+            
+            # Resize and save thumbnail
+            img_thumb = img_for_thumbnail.copy()
+            img_thumb.thumbnail((150, 150), Image.Resampling.LANCZOS)
+            img_thumb.save(thumbnail_path, "JPEG")
+            print(f"Thumbnail saved to {thumbnail_path}")
+        except Exception as thumb_err:
+            print(f"Warning: Could not create thumbnail: {str(thumb_err)}")
+            # Continue anyway - thumbnail is not critical
+        
+        # Verify the file was saved correctly
+        if os.path.exists(save_path):
+            file_size = os.path.getsize(save_path)
+            print(f"File saved successfully. Size: {file_size} bytes")
+            return dbc.Alert(f"Image saved to library as {filename} ({file_size} bytes)", color="success", dismissable=True, duration=3000)
+        else:
+            return dbc.Alert("Error: File was not saved to library", color="danger", dismissable=True, duration=5000)
+    
+    except Exception as e:
+        print(f"Error saving to library: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return dbc.Alert(f"Error saving to library: {str(e)}", color="danger", dismissable=True, duration=5000)
 
 @app.callback(
     Output("share-modal", "is_open"),
@@ -1224,48 +1592,51 @@ state = {
     State("share-modal", "is_open"),
     prevent_initial_call=True
 )
-def share_session(share_clicks, close_clicks, is_open):
-    ctx = callback_context
-    if not ctx.triggered:
-        return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+# def share_session(share_clicks, close_clicks, is_open):
+#     ctx = callback_context
+#     if not ctx.triggered:
+#         return dash.no_update, dash.no_update, dash.no_update, dash.no_update
     
-    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+#     button_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
-    if button_id == "close-share-modal":
-        return False, dash.no_update, dash.no_update, dash.no_update
+#     if button_id == "close-share-modal":
+#         return False, dash.no_update, dash.no_update, dash.no_update
     
-    if button_id == "share-btn":
-        if not state["image_orig"]:
-            return False, "", "", dbc.Alert("No image loaded. Please upload an image first.", color="warning", dismissable=True, duration=3000)
+#     if button_id == "share-btn":
+#         if not state["image_orig"]:
+#             return False, "", "", dbc.Alert("No image loaded. Please upload an image first.", color="warning", dismissable=True, duration=3000)
         
-        try:
-            session_data = {
-                "file_bytes": state["file_bytes"],
-                "image_orig": state["image_orig"],
-                "canvas_json_data": state["canvas_json_data"],
-                "text_annotations": state["text_annotations"],
-                "current_mask": state["current_mask"],
-                "eraser_strokes": state["eraser_strokes"],
-                "zoom_level": state["zoom_level"],
-                "rotation": state["rotation"],
-                "flip_horizontal": state["flip_horizontal"],
-                "flip_vertical": state["flip_vertical"],
-                "file_type": state["file_type"],
-                "filename": state["filename"],
-                "disp_size": state["disp_size"]
-            }
+#         try:
+#             session_data = {
+#                 "file_bytes": state["file_bytes"],
+#                 "image_orig": state["image_orig"],
+#                 "canvas_json_data": state["canvas_json_data"],
+#                 "text_annotations": state["text_annotations"],
+#                 "current_mask": state["current_mask"],
+#                 "eraser_strokes": state["eraser_strokes"],
+#                 "zoom_level": state["zoom_level"],
+#                 "rotation": state["rotation"],
+#                 "flip_horizontal": state["flip_horizontal"],
+#                 "flip_vertical": state["flip_vertical"],
+#                 "file_type": state["file_type"],
+#                 "filename": state["filename"],
+#                 "disp_size": state["disp_size"]
+#             }
             
-            session_id = save_session(session_data)
-            state["session_id"] = session_id
+#             session_id = save_session(session_data)
+#             state["session_id"] = session_id
             
-            share_url = f"http://localhost:8050/?session={session_id}"
+#             share_url = f"http://localhost:8050/?session={session_id}"
             
-            return True, session_id, share_url, ""
+#             return True, session_id, share_url, ""
             
-        except Exception as e:
-            return False, "", "", dbc.Alert(f"Error sharing session: {str(e)}", color="danger", dismissable=True, duration=5000)
+#         except Exception as e:
+#             return False, "", "", dbc.Alert(f"Error sharing session: {str(e)}", color="danger", dismissable=True, duration=5000)
     
-    return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+#     return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+
+
+
 
 @app.callback(
     Output("copy-status", "children"),
@@ -1303,10 +1674,72 @@ def show_3d_view(n_clicks):
     if not state["image_orig"]:
         return dbc.Alert("No image loaded. Please upload an image first.", color="warning", dismissable=True, duration=3000)
     
-    return dbc.Alert([
-        html.I(className="bi bi-info-circle me-2"),
-        "3D View feature coming soon! This will allow you to view medical images in 3D perspective."
-    ], color="info", dismissable=True, duration=5000)
+    try:
+        # Get the current processed image or original
+        img = state.get("image_processed") or state["image_orig"]
+        
+        # Convert to grayscale for 3D visualization
+        if img.mode != 'L':
+            img_gray = img.convert('L')
+        else:
+            img_gray = img
+        
+        # Convert to numpy array
+        img_array = np.array(img_gray)
+        
+        # Create coordinate grids
+        height, width = img_array.shape
+        x = np.linspace(0, width-1, width)
+        y = np.linspace(0, height-1, height)
+        x_grid, y_grid = np.meshgrid(x, y)
+        
+        # Create 3D surface plot
+        fig = go.Figure(data=[go.Surface(
+            z=img_array,
+            x=x_grid,
+            y=y_grid,
+            colorscale='Viridis',
+            showscale=True
+        )])
+        
+        fig.update_layout(
+            title='3D Surface View of Image Intensity',
+            scene=dict(
+                xaxis_title='Width (pixels)',
+                yaxis_title='Height (pixels)',
+                zaxis_title='Intensity',
+                camera=dict(
+                    eye=dict(x=1.5, y=1.5, z=1.3)
+                )
+            ),
+            width=800,
+            height=600,
+            margin=dict(l=0, r=0, t=40, b=0)
+        )
+        
+        # Return the 3D plot in a modal or container
+        return dbc.Modal([
+            dbc.ModalHeader(dbc.ModalTitle("3D View")),
+            dbc.ModalBody([
+                dcc.Graph(figure=fig, style={'height': '600px'})
+            ]),
+            dbc.ModalFooter(
+                dbc.Button("Close", id="close-3d-modal", className="ms-auto", n_clicks=0)
+            )
+        ], id="3d-modal", is_open=True, size="xl")
+        
+    except Exception as e:
+        return dbc.Alert(f"Error generating 3D view: {str(e)}", color="danger", dismissable=True, duration=5000)
+
+@app.callback(
+    Output("3d-view-status", "children", allow_duplicate=True),
+    Input("close-3d-modal", "n_clicks"),
+    prevent_initial_call=True
+)
+def close_3d_modal(n_clicks):
+    if n_clicks:
+        return None
+    return dash.no_update
 
 
 @app.callback(
@@ -1582,20 +2015,13 @@ def load_image(contents, filename):
             modality = file_ext.upper()
             patient_id = "N/A"
         elif file_ext == 'dcm':
-            ds = pydicom.dcmread(io.BytesIO(file_bytes))
-            if hasattr(ds, 'NumberOfSlices') and ds.NumberOfSlices > 1:
-                state["total_slices"] = ds.NumberOfSlices
-                state["current_slice"] = 0
-                img_orig, _ = dicom_to_image(file_bytes)
-                state["image_slices"] = [img_orig]
-            else:
-                img_orig, ds = dicom_to_image(file_bytes)
-                state["total_slices"] = 1
-                state["current_slice"] = 0
-                state["image_slices"] = [img_orig]
+            img_orig, ds = dicom_to_image(file_bytes)
             state["file_type"] = "dcm"
             modality = getattr(ds, 'Modality', 'DICOM')
             patient_id = getattr(ds, 'PatientID', 'Unknown')
+            state["total_slices"] = 1
+            state["current_slice"] = 0
+            state["image_slices"] = [img_orig]
         else:
             return dash.no_update, dash.no_update, dash.no_update, f"❌ Unsupported file type: {file_ext}", {"display": "none"}
         
@@ -1626,6 +2052,270 @@ def load_image(contents, filename):
         return state["image_b64"], disp_size[0], disp_size[1], info, navigator_style
     except Exception as e:
         return dash.no_update, dash.no_update, dash.no_update, f"❌ Error: {e}", {"display": "none"}
+    
+
+# Add this outside your main layout
+dbc.Offcanvas(
+    [
+        html.H5("Image Details", className="mb-3"),
+        html.Div(id="image-details-content")
+    ],
+    id="image-details-offcanvas",
+    title="Image Details",
+    is_open=True,
+    placement="end"
+)
+
+@app.callback(
+    Output("image-details-offcanvas", "is_open"),
+    Input({"type": "library-thumbnail", "index": dash.dependencies.ALL}, "n_clicks"),
+    prevent_initial_call=True
+)
+def toggle_image_details(n_clicks):
+    if any(n_clicks):
+        return True
+    return False
+
+
+
+@app.callback(
+    Output("library-thumbnails", "children"),
+    Input("library-btn", "n_clicks"),
+    prevent_initial_call=True
+)
+def update_library_thumbnails(n_clicks):
+    if not n_clicks:
+        return dash.no_update
+    
+    return create_library_thumbnails()
+
+# Add this clientside callback OUTSIDE the layout, after app.layout is defined:
+app.clientside_callback(
+    """
+    function(prev_clicks, next_clicks) {
+        let container = document.getElementById('library-thumbnails');
+        if (!container) return window.dash_clientside.no_update;
+        
+        const scrollAmount = 200;
+        
+        if (prev_clicks > 0) {
+            container.scrollLeft -= scrollAmount;
+        }
+        if (next_clicks > 0) {
+            container.scrollLeft += scrollAmount;
+        }
+        
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("library-thumbnails", "id"),  
+    Input("carousel-prev-btn", "n_clicks"),
+    Input("carousel-next-btn", "n_clicks"),
+    prevent_initial_call=True
+)
+
+@app.callback(
+    Output('canvas', 'image_content', allow_duplicate=True),
+    Output('canvas', 'width', allow_duplicate=True),
+    Output('canvas', 'height', allow_duplicate=True),
+    Output('upload-info', 'children', allow_duplicate=True),
+    Output('slice-navigator-row', 'style', allow_duplicate=True),
+    Output("library-load-status", "children", allow_duplicate=True),
+    Input({"type": "library-load-btn", "index": dash.dependencies.ALL}, "n_clicks"),
+    prevent_initial_call=True
+)
+def load_from_library_or_thumbnail(load_clicks):
+    if not any(load_clicks):
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    
+    ctx = callback_context
+    if not ctx.triggered:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    
+    # Get the triggered component info directly from context
+    triggered_id = ctx.triggered_id
+    
+    # triggered_id is already a dict for pattern-matching callbacks
+    if isinstance(triggered_id, dict):
+        filename = triggered_id.get('index')
+    else:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, "Error: Invalid component ID"
+    
+    if not filename:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, "Error: No filename found"
+    
+    print(f"Loading file: {filename}")
+    
+    try:
+        full_path = os.path.join(IMAGE_LIBRARY_PATH, filename)
+        print(f"Loading from library: {full_path}")
+        
+        if not os.path.exists(full_path):
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, f"Error: File not found - {filename}"
+        
+        with open(full_path, 'rb') as f:
+            file_bytes = f.read()
+        
+        file_ext = filename.lower().split('.')[-1]
+        print(f"File extension: {file_ext}")
+        print(f"File size: {len(file_bytes)} bytes")
+        
+        if file_ext in ['png', 'jpg', 'jpeg']:
+            img_orig = Image.open(io.BytesIO(file_bytes))
+            if img_orig.mode != 'RGB':
+                img_orig = img_orig.convert('RGB')
+            ds = None
+            state["file_type"] = file_ext
+            modality = file_ext.upper()
+            patient_id = "N/A"
+        elif file_ext == 'dcm':
+            try:
+                img_orig, ds = dicom_to_image(file_bytes)
+                state["file_type"] = "dcm"
+                modality = getattr(ds, 'Modality', 'DICOM')
+                patient_id = getattr(ds, 'PatientID', 'Unknown')
+                print(f"Successfully loaded DICOM: {modality}")
+            except Exception as dicom_error:
+                print(f"DICOM load failed: {str(dicom_error)}")
+                try:
+                    img_orig = Image.open(io.BytesIO(file_bytes))
+                    if img_orig.mode != 'RGB':
+                        img_orig = img_orig.convert('RGB')
+                    ds = None
+                    state["file_type"] = "png"
+                    modality = "IMAGE"
+                    patient_id = "N/A"
+                    print("Loaded as image instead of DICOM")
+                except Exception as img_error:
+                    raise ValueError(f"Failed to load file: DICOM error: {str(dicom_error)}, Image error: {str(img_error)}")
+        else:
+            return dash.no_update, dash.no_update, dash.no_update, f"Unsupported file type: {file_ext}", dash.no_update, "Unsupported file"
+        
+        img_disp, disp_size = resize_for_display(img_orig)
+        state.update({
+            "file_bytes": file_bytes,
+            "ds": ds,
+            "image_orig": img_orig,
+            "image_display": img_disp,
+            "disp_size": disp_size,
+            "current_mask": None,
+            "text_annotations": [],
+            "eraser_strokes": [],
+            "zoom_level": 1.0,
+            "rotation": 0,
+            "flip_horizontal": False,
+            "flip_vertical": False,
+            "filename": filename,
+            "image_b64": pil_to_b64(img_disp),
+            "canvas_json_data": None,
+        })
+        
+        info = f"✓ Loaded: {filename} | Type: {modality} | Size: {img_orig.size[0]}x{img_orig.size[1]}"
+        navigator_style = {"display": "none"}
+        return state["image_b64"], disp_size[0], disp_size[1], info, navigator_style, "Loaded successfully"
+        
+    except Exception as e:
+        print(f"Error loading from library: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return dash.no_update, dash.no_update, dash.no_update, f"Error: {str(e)}", dash.no_update, f"Error: {str(e)}"
+# Add callback for loading images when clicking on thumbnails
+@app.callback(
+    Output('canvas', 'image_content', allow_duplicate=True),
+    Output('canvas', 'width', allow_duplicate=True),
+    Output('canvas', 'height', allow_duplicate=True),
+    Output('upload-info', 'children', allow_duplicate=True),
+    Output('slice-navigator-row', 'style', allow_duplicate=True),
+    Output("library-load-status", "children", allow_duplicate=True),
+    Input({"type": "library-thumbnail", "index": dash.dependencies.ALL}, "n_clicks"),
+    prevent_initial_call=True
+)
+def load_from_thumbnail(clicks):
+    if not any(clicks):
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    
+    # Find which thumbnail was clicked
+    ctx = callback_context
+    if not ctx.triggered:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    
+    # Get the triggered component info
+    triggered = ctx.triggered[0]
+    prop_id = triggered['prop_id']
+    
+    # Extract filename from the component ID
+    if isinstance(prop_id, dict) and prop_id.get('type') == 'library-thumbnail':
+        filename = prop_id.get('index')
+    else:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    
+    try:
+        full_path = os.path.join(IMAGE_LIBRARY_PATH, filename)
+        print(f"Loading from thumbnail: {full_path}")
+        
+        with open(full_path, 'rb') as f:
+            file_bytes = f.read()
+        
+        file_ext = filename.lower().split('.')[-1]
+        print(f"File extension: {file_ext}")
+        print(f"File size: {len(file_bytes)} bytes")
+        
+        if file_ext in ['png', 'jpg', 'jpeg']:
+            img_orig = Image.open(io.BytesIO(file_bytes))
+            if img_orig.mode != 'RGB':
+                img_orig = img_orig.convert('RGB')
+            ds = None
+            state["file_type"] = file_ext
+            modality = file_ext.upper()
+            patient_id = "N/A"
+        elif file_ext == 'dcm':
+            # Try to read as DICOM
+            try:
+                img_orig, ds = dicom_to_image(file_bytes)
+                state["file_type"] = "dcm"
+                modality = getattr(ds, 'Modality', 'DICOM')
+                patient_id = getattr(ds, 'PatientID', 'Unknown')
+                print(f"Successfully loaded DICOM: {modality}")
+            except Exception as dicom_error:
+                print(f"DICOM load failed: {str(dicom_error)}")
+                # Try to load as image instead (in case it was saved as PNG with .dcm extension)
+                try:
+                    img_orig = Image.open(io.BytesIO(file_bytes))
+                    if img_orig.mode != 'RGB':
+                        img_orig = img_orig.convert('RGB')
+                    ds = None
+                    state["file_type"] = "png"  # It's actually a PNG
+                    modality = "IMAGE"
+                    patient_id = "N/A"
+                    print("Loaded as image instead of DICOM")
+                except Exception as img_error:
+                    raise ValueError(f"Failed to load file as both DICOM and image: DICOM error: {str(dicom_error)}, Image error: {str(img_error)}")
+        else:
+            return dash.no_update, dash.no_update, dash.no_update, f"Unsupported file type: {file_ext}", dash.no_update, "Unsupported file"
+        
+        img_disp, disp_size = resize_for_display(img_orig)
+        state.update({
+            "file_bytes": file_bytes,
+            "ds": ds,
+            "image_orig": img_orig,
+            "image_display": img_disp,
+            "disp_size": disp_size,
+            "current_mask": None,
+            "text_annotations": [],
+            "eraser_strokes": [],
+            "zoom_level": 1.0,
+            "rotation": 0,
+            "flip_horizontal": False,
+            "flip_vertical": False,
+            "filename": filename,
+            "image_b64": pil_to_b64(img_disp),
+        })
+        info = f"Loaded from library: {filename} | Type: {modality} | Patient: {patient_id} | Size: {img_orig.size[0]}x{img_orig.size[1]}"
+        navigator_style = {"display": "none"}  # Assuming single slice
+        return state["image_b64"], disp_size[0], disp_size[1], info, navigator_style, "Loaded successfully"
+    except Exception as e:
+        print(f"Error loading from thumbnail: {str(e)}")
+        return dash.no_update, dash.no_update, dash.no_update, f"Error: {str(e)}", dash.no_update, f"Error: {str(e)}"
 
 @app.callback(
     Output("canvas", "image_content", allow_duplicate=True),
@@ -2063,7 +2753,7 @@ def handle_chat_and_analysis(send_click, analyze_click, text_value, json_mask, c
             
             reply = chat_with_openai(prompt, state["chat_history"], b64)
         else:
-            # Analyze annotated region
+            # Analyze annotated region, send full hiddenly
             stats = compute_mask_stats(mask_array)
             bbox_disp = stats.get("bbox")
             
@@ -2084,17 +2774,20 @@ def handle_chat_and_analysis(send_click, analyze_click, text_value, json_mask, c
                 ], className="p-2 mb-2 bg-primary text-white rounded"))
                 return children, "", cases_html
             
-            b64 = pil_to_b64(cropped)
+            full_b64 = state["image_b64"]
+            cropped_b64 = pil_to_b64(cropped)
+            image_data = full_b64 + "|" + cropped_b64
+            
             children.append(html.Div([
                 html.Strong("You:"),
                 html.P(f"{prompt} (Annotated region)", style={"fontSize": "0.85rem"})
             ], className="d-flex justify-content-end mb-2"))
             
             children.append(html.Div([
-                html.Img(src=b64, style={"maxWidth": "100%", "borderRadius": "6px", "marginBottom": "8px"})
+                html.Img(src=cropped_b64, style={"maxWidth": "100%", "borderRadius": "6px", "marginBottom": "8px"})
             ]))
             
-            reply = chat_with_openai(prompt, state["chat_history"], b64)
+            reply = chat_with_openai(prompt, state["chat_history"], image_data)
         
         state["chat_history"].append({"role": "user", "content": prompt})
         state["chat_history"].append({"role": "assistant", "content": reply})

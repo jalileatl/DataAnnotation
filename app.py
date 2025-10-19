@@ -736,104 +736,247 @@ def create_library_thumbnails():
     except Exception as e:
         print(f"Error creating library thumbnails: {e}")
         return html.P(f"Error: {str(e)}", className="text-danger")
+    
+
+    
+    
+
+
 
 app.layout = html.Div(id="app-container", children=[
     html.Link(
         rel="stylesheet",
         href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css"
     ),
+dcc.Location(id='url', refresh=False),  # Tracks page loads/reloads
+html.Div(id='reset-trigger', style={'display': 'none'}),  # Hidden output for server-side reset
+html.Div(id='client-reset-trigger', style={'display': 'none'}),  # Hidden output for client-side reset
+
     dbc.Container([
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    dbc.Switch(
-                        id="theme-switch",
-                        label="Dark Mode",
-                        value=False,
-                        className="float-end"
-                    ),
-                    html.H1("Radiology Image Annotation Dashboard", className="text-center my-2", 
-                           style={"fontWeight": "700", "fontSize": "1.5rem", "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-                                  "WebkitBackgroundClip": "text", "WebkitTextFillColor": "transparent"}),
-                    html.P("Radiology image annotation and analysis platform", 
-                           className="text-center mb-2", style={"fontSize": "0.9rem","marginRight": "120px"})
-                ])
-            ])
-        ]),
+        
+        # dbc.Row([
+        #     dbc.Col([
+        #         html.Div([
+        #             dbc.Switch(
+        #                 id="theme-switch",
+        #                 label="Dark Mode",
+        #                 value=False,
+        #                 className="float-end"
+        #             ),
+        #             html.H1("Radiology Image Annotation Dashboard", className="text-center my-2", 
+        #                    style={"fontWeight": "700", "fontSize": "1.5rem", "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+        #                           "WebkitBackgroundClip": "text", "WebkitTextFillColor": "transparent"}),
+        #             html.P("Radiology image annotation and analysis platform", 
+        #                    className="text-center mb-2", style={"fontSize": "0.9rem","marginRight": "120px"})
+        #         ])
+        #     ])
+        # ]),
         
         # Top toolbar with upload, library, and save buttons
-        dbc.Row([
-            dbc.Col([
-                html.Div(
-                    className="d-flex justify-content-between mb-3",
-                    children=[
-                        html.Div(
-                            className="btn-group",
-                            role="group",
-                            children=[
-                               dcc.Upload(
-    id='upload-dicom',
-    children=html.Div([
-        html.I(className="bi bi-cloud-upload me-2"),
-        'Upload Image'
-    ]),
-    style={
-        'width': '100%',
-        'height': '40px',
-        'lineHeight': '40px',
-        'borderWidth': '1px',
-        'borderStyle': 'solid',
-        'borderRadius': '4px',
-        'textAlign': 'center',
-        'borderColor': '#667eea',
-        'cursor': 'pointer',
-        'fontWeight': '500',
-        # ✅ colors visible in both modes
-        'backgroundColor': 'var(--bs-body-bg)',  # adapts with theme
-        'color': 'var(--bs-body-color)',        
-    },
-    accept='.dcm,.png,.jpg,.jpeg',
-    multiple=False
-)
-,
-                                dbc.Button(
-                                    [html.I(className="bi bi-folder me-2"), "Library"],
-                                    id="library-btn",
-                                    color="secondary",
-                                    outline=True,
-                                    className="ms-2"
-                                ),
-                                dbc.Button(
-                                    [html.I(className="bi bi-save me-2"), "Save to Library"],
-                                    id="save-to-library-btn",
-                                    color="success",
-                                    outline=True,
-                                    className="ms-2"
-                                )
-                            ]
-                        ),
-                        html.Div(
-                            id="save-to-library-status",
-                            className="text-muted small"
-                        )
-                    ]
-                )
-            ])
-        ]),
+#         dbc.Row([
+#             dbc.Col([
+#                 html.Div(
+#                     className="d-flex justify-content-between mb-3",
+#                     children=[
+#                         html.Div(
+#                             className="btn-group",
+#                             role="group",
+#                             children=[
+#                                dcc.Upload(
+#     id='upload-dicom',
+#     children=html.Div([
+#         html.I(className="bi bi-cloud-upload me-2"),
+#         'Upload Image'
+#     ]),
+#     style={
+#         'width': '100%',
+#         'height': '40px',
+#         'lineHeight': '40px',
+#         'borderWidth': '1px',
+#         'borderStyle': 'solid',
+#         'borderRadius': '4px',
+#         'textAlign': 'center',
+#         'borderColor': '#667eea',
+#         'cursor': 'pointer',
+#         'fontWeight': '500',
+#         # ✅ colors visible in both modes
+#         'backgroundColor': 'var(--bs-body-bg)',  # adapts with theme
+#         'color': 'var(--bs-body-color)',        
+#     },
+#     accept='.dcm,.png,.jpg,.jpeg',
+#     multiple=False
+# )
+# ,
+#                                 dbc.Button(
+#                                     [html.I(className="bi bi-folder me-2"), "Library"],
+#                                     id="library-btn",
+#                                     color="secondary",
+#                                     outline=True,
+#                                     className="ms-2"
+#                                 ),
+#                                 dbc.Button(
+#                                     [html.I(className="bi bi-save me-2"), "Save to Library"],
+#                                     id="save-to-library-btn",
+#                                     color="success",
+#                                     outline=True,
+#                                     className="ms-2"
+#                                 )
+#                             ]
+#                         ),
+#                         html.Div(
+#                             id="save-to-library-status",
+#                             className="text-muted small"
+#                         )
+#                     ]
+#                 )
+#             ])
+#         ]),
+
+
+
+dbc.Row(
+    dbc.Col(
+        width=12,
+       style={"padding": "0px", "marginBottom": "8px", "position": "relative"},
+        children=[
+
+            html.Img(
+               src="/assets/banner.png",
+                style={
+                    "height": "130px",
+                    "width": "100%",
+                    "display": "block",
+                    "margin": "0 auto 10px auto",
+                    "objectFit": "cover",
+                    "position": "absolute",
+                }
+    
+            ),
+
+            # Header section
+            html.Div([
+                dbc.Switch(
+                    id="theme-switch",
+                    label="Dark Mode",
+                    value=False,
+                    className="float-end",
+                    style={"marginTop": "10px", "position": "relative", "zIndex": "9", "color": "#fff", "paddingRight": "30px"},
+                ),
+                html.H1(
+                    "Radiology Image Annotation Dashboard",
+                    className="text-center my-2",
+                    style={
+                        "fontWeight": "700",
+                        "top": "14px",
+                        "fontSize": "1.5rem",
+                        "background": "linear-gradient(135deg, rgb(79, 102, 206) 0%, rgb(201 162 239) 100%)",
+                        "WebkitBackgroundClip": "text",
+                        "WebkitTextFillColor": "transparent", "position": "relative", "z-index": "1",
+                    }
+                ),
+                html.P(
+                    "Radiology image annotation and analysis platform",
+                    className="text-center mb-2",
+                    style={"fontSize": "0.9rem", "top": "8px","position": "relative", "z-index": "1", "color": "#fff"}
+                ),
+            ]),
+
+            # Toolbar section
+            html.Div(
+                className="d-flex justify-content-between mb-3 mt-2",
+               
+                children=[
+                    html.Div(
+                        className="btn-group",
+                         style={"backgroundColor": "rgb(0 25 47 / 80%)",  "padding": "10px", "position": "relative", "zIndex": "9", "left":"10px", "top":"-5px", "border": "dashed 1px #a199ac", "borderRadius": "20px 20px 0 0", "borderBottom": "0px", "borderBottom": "0px"},
+                
+                        role="group",
+                        children=[
+                            dcc.Upload(
+                                id='upload-dicom',
+                                children=html.Div([
+                                    html.I(className="bi bi-cloud-upload me-2"),
+                                    'Upload Image'
+                                ]),
+                                style={
+                                    'width': '100%',
+                                    'height': '40px',
+                                    'padding-left': '20px',
+                                    'padding-right': '20px',
+                                    'backgroundColor': '#034076',
+                                    'lineHeight': '40px',
+                                    'borderWidth': '1px',
+                                    # 'borderStyle': 'solid',
+                                    'borderRadius': '4px',
+                                    'textAlign': 'center',
+                                    'border':'dashed 1px #3079b9',
+                                    'border-radius':'40px',
+                                    'cursor': 'pointer',
+                                    'fontWeight': '500',
+                                    'color': '#fff',
+                                    # 'backgroundColor': 'var(--bs-body-bg)',
+                                    # 'color': 'var(--bs-body-color)',
+                                },
+                                accept='.dcm,.png,.jpg,.jpeg',
+                                multiple=False
+                            ),
+                            dbc.Button(
+                                [html.I(className="bi bi-folder me-2"), "Library"],
+                                id="library-btn",
+                                color="secondary",
+                                outline=True,
+                                className="ms-2",
+                                style={
+                                       'border':'1px dashed rgb(139 61 255)',
+                                    'border-radius':'40px',
+                                    'color': '#fff',
+                                    'backgroundColor': '#5409c3',
+                                },
+                            ),
+                            dbc.Button(
+                                [html.I(className="bi bi-save me-2"), "Save to Library"],
+                                id="save-to-library-btn",
+                                color="success",
+                                outline=True,
+                                className="ms-2",
+                                 style={
+                                     'border':'1px dashed rgb(139 61 255)',
+                                    'border-radius':'40px',
+                                    'color': '#fff',
+                                    'backgroundColor': '#5409c3',
+                                },
+                            )
+                        ]
+                    ),
+                    html.Div(
+                        id="save-to-library-status",
+                        className="text-muted small align-self-center"
+                    )
+                ]
+            )
+        ]
+    )
+),
+
         
         dbc.Row([                     
             dbc.Col(id="left-column", md=9, children=[
                 dbc.Card([
                     dbc.CardHeader("Medical Image Viewer", className="bg-gradient-primary text-white py-2", 
-                                 style={"background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", "fontSize": "0.95rem"}),
+                                 style={"background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", "fontSize": "0.95rem",}),
                     dbc.CardBody([
                         html.Div(
-                            className="toolbar mb-2 p-2 rounded border",
-                            style={"overflowX": "auto",  "whiteSpace": "nowrap", "backgroundColor": "#f8f9fa",
-                                   "boxShadow": "0 2px 6px rgba(0,0,0,0.08)"},
+                            className="toolbar mb-2 p-1 pt-2 ps-2 pe-2 rounded border-dashed",
+                            style={"overflowX": "auto",  "whiteSpace": "nowrap", "padding": "15px !important;", "background": "#fbf9f9", 'borderWidth': '1px', 'borderStyle': 'dashed', 'borderRadius': '10px', 'borderColor': "#cfcdd4"
+                                },
+
+                                   
+    
+    
+   
                             children=[
                                 html.Div(
-                                    className="btn-group me-2 mb-1",
+                                    className="btn-group me-2 mb-1 bg-white",
                                     role="group",
                                     children=[
                                         dbc.Button(
@@ -844,7 +987,7 @@ app.layout = html.Div(id="app-container", children=[
                                             size="sm",
                                             className="px-2",
                                             title="Polygon Tool",
-                                            style={"fontSize": "0.8rem","display": "none"}
+                                            style={"fontSize": "0.8rem","display": "none",}
                                         ),
                                         dbc.Button(
                                             [html.I(className="bi bi-square me-1"), "Rectangle"],
@@ -854,7 +997,7 @@ app.layout = html.Div(id="app-container", children=[
                                             size="sm",
                                             className="px-2",
                                             title="Rectangle Tool",
-                                            style={"fontSize": "0.8rem"}
+                                            style={"fontSize": "0.8rem","display": "none"}
                                         ),
                                         dbc.Button(
                                             [html.I(className="bi bi-circle me-1"), "Circle"],
@@ -864,7 +1007,7 @@ app.layout = html.Div(id="app-container", children=[
                                             size="sm",
                                             className="px-2",
                                             title="Circle Tool",
-                                            style={"fontSize": "0.8rem"}
+                                            style={"fontSize": "0.8rem","display": "none"}
                                         ),
                                         dbc.Button(
                                             [html.I(className="bi bi-slash-lg me-1"), "Line"],
@@ -874,7 +1017,7 @@ app.layout = html.Div(id="app-container", children=[
                                             size="sm",
                                             className="px-2",
                                             title="Line Tool",
-                                            style={"fontSize": "0.8rem"}
+                                            style={"fontSize": "0.8rem","display": "none"}
                                         ),
                                         dbc.Button(
                                             [html.I(className="bi bi-pencil me-1"), "Freehand"],
@@ -905,12 +1048,12 @@ app.layout = html.Div(id="app-container", children=[
                                         dbc.Button(
     "Labeling",
     id="tool-text",
-    color="secondary",
+    color="primary",
     outline=True,
     size="sm",
     className="px-2",
     title="Add Label Annotation",
-    style={"fontSize": "0.8rem"}
+    style={"fontSize": "0.8rem","display": "none"}
 ),
 
                                     ]
@@ -983,7 +1126,7 @@ app.layout = html.Div(id="app-container", children=[
                                             size="sm",
                                             className="px-2",
                                             title="Flip Horizontal",
-                                            style={"fontSize": "0.8rem"}
+                                            style={"fontSize": "0.8rem","display": "none"}
                                         ),
                                         dbc.Button(
                                             [html.I(className="bi bi-symmetry-vertical me-1"), "Flip V"],
@@ -993,7 +1136,7 @@ app.layout = html.Div(id="app-container", children=[
                                             size="sm",
                                             className="px-2",
                                             title="Flip Vertical",
-                                            style={"fontSize": "0.8rem"}
+                                            style={"fontSize": "0.8rem","display": "none"}
                                         ),
                                     ]
                                 ),
@@ -1019,7 +1162,7 @@ app.layout = html.Div(id="app-container", children=[
                                             size="sm",
                                             className="px-2",
                                             title="Save Annotation",
-                                            style={"fontSize": "0.8rem"}
+                                            style={"fontSize": "0.8rem","display": "none"}
                                         ),
                                         dbc.Button(
                                             [html.I(className="bi bi-trash me-1"), "Clear"],
@@ -1058,23 +1201,47 @@ app.layout = html.Div(id="app-container", children=[
             "boxShadow": "0 4px 12px rgba(0,0,0,0.1)" 
         },
         children=[
-            DashCanvas(
-                id='canvas',
-                lineWidth=3,
-                lineColor='red',
-                tool='polygon',
-                hide_buttons=['line', 'select', 'pan', 'zoom', 'reset'],
-            ),
-        ]
+            # DashCanvas(
+            #     id='canvas',
+            #     lineWidth=3,
+            #     lineColor='red',
+            #     tool='polygon',
+            #     hide_buttons=['line', 'select', 'pan', 'zoom', 'reset'],
+                
+            # ),
+
+                        html.Div(
+    [
+        DashCanvas(
+            id='canvas',
+            lineWidth=3,
+            lineColor='red',
+            tool='polygon',
+            hide_buttons=['line', 'select', 'pan', 'zoom', 'reset'],
+           
+        )
+    ],
+    style={
+        "backgroundColor": "#000000", 
+       
+        
+        
+        
+    }
+)
+             
+        ],
+      
     ),
     html.Div(
         className="col-md-3",
         style={
             "padding": "10px",
-            "border": "1px solid #e0e0e0",
+            "border": "10px solid #fff",
             "borderRadius": "8px",
-            "backgroundColor": "#f8f9fa",
+            "backgroundColor": "#eaeaea",
             "position": "relative",
+            "top": "-10px",
         },
         children=[
             html.Div(
@@ -1189,7 +1356,7 @@ app.layout = html.Div(id="app-container", children=[
                                 html.I(className="bi bi-file-earmark-zip me-1"),
                                 "Export ZIP"
                             ], id="export-btn", color="success", size="sm", className="w-100 mt-2",
-                            style={"fontWeight": "600", "padding": "8px", "fontSize": "0.8rem"}),
+                            style={"fontWeight": "600", "padding": "8px", "fontSize": "0.8rem","display": "none"}),
                             dbc.Button([
                                 html.I(className="bi bi-file-earmark-text me-1"),
                                 "Generate Report"
@@ -1206,9 +1373,9 @@ app.layout = html.Div(id="app-container", children=[
                         html.I(className="bi bi-search me-1"),
                         "Analyze"
                     ], className="bg-gradient-info text-white py-2", 
-                    style={"background": "linear-gradient(135deg, #17a2b8 0%, #138496 100%)", "fontWeight": "600", "fontSize": "0.85rem"}),
+                    style={"background": "linear-gradient(135deg, #17a2b8 0%, #138496 100%)", "fontWeight": "600", "fontSize": "0.85rem","display": "none"}),
                     dbc.CardBody([
-                        html.P("Analyze selected region or full image with AI.", 
+                        html.P("", 
                              className="small text-muted mb-2", style={"fontSize": "0.75rem"}),
                         dcc.Loading([
                             dbc.Button([html.I(className="bi bi-search me-1"), "Analyze"], 
@@ -1364,6 +1531,7 @@ app.layout = html.Div(id="app-container", children=[
         
         dcc.Store(id="theme-store", data="light"),
         dcc.Store(id="eraser-strokes-store", data=[]),
+        dcc.Store(id="text-color-store", data="#FF0000"),  # Add a store for text color
         html.Div(id="canvas-data-store", style={"display": "none"}),
         dbc.Modal([
             dbc.ModalHeader(dbc.ModalTitle("Share Session", style={"fontSize": "1rem"})),
@@ -1792,8 +1960,8 @@ def update_mask_stats(json_data, height, width, eraser_strokes):
             return "No annotation detected. Please draw on the canvas."
         
         stats_display = [
-            html.P([html.I(className="bi bi-tools me-1"), f"Tool: {stats['tool_type']}"], 
-                  className="mb-1", style={"fontWeight": "600", "fontSize": "0.75rem"}),
+            # html.P([html.I(className="bi bi-tools me-1"), f"Tool: {stats['tool_type']}"], 
+            #       className="mb-1", style={"fontWeight": "600", "fontSize": "0.75rem"}),
             html.P([html.I(className="bi bi-rulers me-1"), f"Area: {stats['area_pixels']} px"], 
                   className="mb-1", style={"fontSize": "0.75rem"}),
             html.P([html.I(className="bi bi-pie-chart me-1"), f"Coverage: {stats['percent']:.2f}%"], 
@@ -2030,6 +2198,7 @@ def load_image(contents, filename):
             "file_bytes": file_bytes,
             "ds": ds,
             "image_orig": img_orig,
+            "image_original_pristine": img_orig.copy(),  # NEW: Keep pristine original
             "image_display": img_disp,
             "disp_size": disp_size,
             "mask_history": [],
@@ -2039,7 +2208,7 @@ def load_image(contents, filename):
             "chat_history": [],
             "radiopaedia_cases": [],
             "zoom_level": 1.0,
-            "text_annotations": [],
+            "text_annotations": [],  # Start fresh
             "rotation": 0,
             "flip_horizontal": False,
             "flip_vertical": False,
@@ -2052,8 +2221,6 @@ def load_image(contents, filename):
         return state["image_b64"], disp_size[0], disp_size[1], info, navigator_style
     except Exception as e:
         return dash.no_update, dash.no_update, dash.no_update, f"❌ Error: {e}", {"display": "none"}
-    
-
 # Add this outside your main layout
 dbc.Offcanvas(
     [
@@ -2196,6 +2363,7 @@ def load_from_library_or_thumbnail(load_clicks):
             "file_bytes": file_bytes,
             "ds": ds,
             "image_orig": img_orig,
+            "image_original_pristine": img_orig.copy(),  # NEW: Keep pristine original
             "image_display": img_disp,
             "disp_size": disp_size,
             "current_mask": None,
@@ -2298,6 +2466,7 @@ def load_from_thumbnail(clicks):
             "file_bytes": file_bytes,
             "ds": ds,
             "image_orig": img_orig,
+            "image_original_pristine": img_orig.copy(),  # NEW: Keep pristine original
             "image_display": img_disp,
             "disp_size": disp_size,
             "current_mask": None,
@@ -2317,282 +2486,9 @@ def load_from_thumbnail(clicks):
         print(f"Error loading from thumbnail: {str(e)}")
         return dash.no_update, dash.no_update, dash.no_update, f"Error: {str(e)}", dash.no_update, f"Error: {str(e)}"
 
+# Fixed callback for text color
 @app.callback(
-    Output("canvas", "image_content", allow_duplicate=True),
-    Input("add-text-modal-btn", "n_clicks"),
-    State("text-input-modal", "value"),
-    State("font-size-slider", "value"),
-    State("font-style-dropdown", "value"),
-    State("text-x-position", "value"),
-    State("text-y-position", "value"),
-    prevent_initial_call=True
-)
-def add_text_annotation(n_clicks, text_value, font_size, font_style, x_pos, y_pos):
-    if n_clicks and text_value and state["image_orig"]:
-        img = state["image_orig"].copy()
-        hex_color = state["text_color"].lstrip('#')
-        rgb_color = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-        
-        disp_w, disp_h = state["disp_size"]
-        orig_w, orig_h = state["image_orig"].size
-        scale_x = orig_w / disp_w
-        scale_y = orig_h / disp_h
-        
-        position = (
-            int((int(x_pos) if x_pos else 50) * scale_x), 
-            int((int(y_pos) if y_pos else 50) * scale_y)
-        )
-        
-        img = add_text_to_image(img, text_value, position, int(font_size), rgb_color, font_style)
-        state["image_orig"] = img
-        img_disp, disp_size = resize_for_display(img)
-        state["image_display"] = img_disp
-        state["disp_size"] = disp_size
-        state["image_b64"] = pil_to_b64(img_disp)
-        state["text_annotations"].append({
-            "text": text_value,
-            "position": position,
-            "font_size": font_size,
-            "font_style": font_style,
-            "color": state["text_color"],
-            "timestamp": datetime.datetime.now().isoformat()
-        })
-        return state["image_b64"]
-    return dash.no_update
-
-@app.callback(
-    Output("tool-polygon", "outline"),
-    Output("tool-rectangle", "outline"),
-    Output("tool-circle", "outline"),
-    Output("tool-line", "outline"),
-    Output("tool-pen", "outline"),
-    Output("tool-eraser", "outline"),
-    Output("tool-text", "outline"),
-    Input("tool-polygon", "n_clicks"),
-    Input("tool-rectangle", "n_clicks"),
-    Input("tool-circle", "n_clicks"),
-    Input("tool-line", "n_clicks"),
-    Input("tool-pen", "n_clicks"),
-    Input("tool-eraser", "n_clicks"),
-    Input("tool-text", "n_clicks"),
-)
-def update_tool_buttons(poly_clicks, rect_clicks, circle_clicks, line_clicks, pen_clicks, eraser_clicks, text_clicks):
-    ctx = callback_context
-    if not ctx.triggered:
-        return True, True, True, True, True, True, True
-    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
-    outlines = [True] * 7
-    tool_map = {
-        "tool-polygon": 0,
-        "tool-rectangle": 1,
-        "tool-circle": 2,
-        "tool-line": 3,
-        "tool-pen": 4,
-        "tool-eraser": 5,
-        "tool-text": 6
-    }
-    if button_id in tool_map:
-        outlines[tool_map[button_id]] = False
-    return tuple(outlines)
-
-@app.callback(
-    Output("canvas", "tool"),
-    Output("text-modal", "is_open"),
-    Output("canvas", "lineColor"),
-    Output("canvas", "lineWidth"),
-    Input("tool-polygon", "n_clicks"),
-    Input("tool-rectangle", "n_clicks"),
-    Input("tool-circle", "n_clicks"),
-    Input("tool-line", "n_clicks"),
-    Input("tool-pen", "n_clicks"),
-    Input("tool-eraser", "n_clicks"),
-    Input("tool-text", "n_clicks"),
-    Input("cancel-text-btn", "n_clicks"),
-    Input("add-text-modal-btn", "n_clicks"),
-    State("text-modal", "is_open"),
-    prevent_initial_call=True
-)
-def update_canvas_tool(poly_clicks, rect_clicks, circle_clicks, line_clicks, pen_clicks, eraser_clicks, text_clicks, 
-                      cancel_clicks, add_clicks, is_open):
-    ctx = callback_context
-    if not ctx.triggered:
-        return "polygon", False, "red", 3
-    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
-    
-    if button_id == "tool-text":
-        return "polygon", True, "red", 3
-    elif button_id in ["cancel-text-btn", "add-text-modal-btn"]:
-        return "polygon", False, "red", 3
-    
-    tool_map = {
-        "tool-polygon": "polygon",
-        "tool-rectangle": "rectangle",
-        "tool-circle": "circle",
-        "tool-line": "line",
-        "tool-pen": "pen",
-        "tool-eraser": "pen"
-    }
-    
-    if button_id == "tool-eraser":
-        state["eraser_mode"] = True
-        line_color = "white"
-        line_width = 15
-    else:
-        state["eraser_mode"] = False
-        line_color = "red"
-        line_width = 3
-    
-    tool = tool_map.get(button_id, "polygon")
-    
-    return tool, is_open, line_color, line_width
-
-
-@app.callback(
-    Output("canvas", "image_content", allow_duplicate=True),
-    Input("rotate-left-btn", "n_clicks"),
-    Input("rotate-right-btn", "n_clicks"),
-    Input("flip-h-btn", "n_clicks"),
-    Input("flip-v-btn", "n_clicks"),
-    prevent_initial_call=True
-)
-def transform_image(rotate_left, rotate_right, flip_h, flip_v):
-    ctx = callback_context
-    if not ctx.triggered or not state["image_orig"]:
-        return dash.no_update
-    
-    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
-    img = state["image_orig"].copy()
-    
-    if button_id == "rotate-left-btn":
-        img = img.rotate(90, expand=True)
-        state["rotation"] = (state["rotation"] - 90) % 360
-    elif button_id == "rotate-right-btn":
-        img = img.rotate(-90, expand=True)
-        state["rotation"] = (state["rotation"] + 90) % 360
-    elif button_id == "flip-h-btn":
-        img = img.transpose(Image.FLIP_LEFT_RIGHT)
-        state["flip_horizontal"] = not state["flip_horizontal"]
-    elif button_id == "flip-v-btn":
-        img = img.transpose(Image.FLIP_TOP_BOTTOM)
-        state["flip_vertical"] = not state["flip_vertical"]
-    
-    state["image_orig"] = img
-    img_disp, disp_size = resize_for_display(img)
-    state["image_display"] = img_disp
-    state["disp_size"] = disp_size
-    state["image_b64"] = pil_to_b64(img_disp)
-    
-    return state["image_b64"]
-
-@app.callback(
-    Output("canvas", "json_data", allow_duplicate=True),
-    Input("clear-btn", "n_clicks"),
-    prevent_initial_call=True
-)
-def clear_annotations(n_clicks):
-    if n_clicks:
-        state["current_mask"] = None
-        state["canvas_json_data"] = None
-        state["eraser_strokes"] = []
-        return ""
-    return dash.no_update
-
-@app.callback(
-    Output("download-annotation", "data"),
-    Input("export-btn", "n_clicks"),
-    State("canvas-data-store", "children"),
-    State('canvas', 'height'),
-    State('canvas', 'width'),
-    State("eraser-strokes-store", "data"),
-    prevent_initial_call=True
-)
-def export_annotation(n_clicks, json_data, height, width, eraser_strokes):
-    if not n_clicks or not state["image_orig"]:
-        return dash.no_update
-    
-    try:
-        mask_array = None
-        if json_data:
-            mask_array = parse_canvas_data(json_data, height, width, eraser_strokes)
-        
-        img_bytes = io.BytesIO()
-        state["image_orig"].save(img_bytes, format='PNG')
-        img_bytes = img_bytes.getvalue()
-        
-        mask_bytes = b""
-        if mask_array is not None and mask_array.any():
-            mask_img = Image.fromarray(mask_array)
-            mask_buf = io.BytesIO()
-            mask_img.save(mask_buf, format='PNG')
-            mask_bytes = mask_buf.getvalue()
-        
-        stats = compute_mask_stats(mask_array) if mask_array is not None else {}
-        metadata = {
-            "filename": state.get("filename", "unknown"),
-            "file_type": state.get("file_type", "unknown"),
-            "image_size": state["image_orig"].size,
-            "annotation_stats": stats,
-            "text_annotations": state["text_annotations"],
-            "timestamp": datetime.datetime.now().isoformat(),
-            "zoom_level": state["zoom_level"],
-            "rotation": state["rotation"],
-            "flip_horizontal": state["flip_horizontal"],
-            "flip_vertical": state["flip_vertical"]
-        }
-        
-        zip_buf = make_export_zip(img_bytes, mask_bytes, metadata, state.get("filename", "image"))
-        
-        return dcc.send_bytes(zip_buf.getvalue(), f"annotation_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip")
-    
-    except Exception as e:
-        print(f"Export error: {e}")
-        return dash.no_update
-
-@app.callback(
-    Output("download-report", "data"),
-    Input("report-btn", "n_clicks"),
-    State("canvas-data-store", "children"),
-    State('canvas', 'height'),
-    State('canvas', 'width'),
-    State("eraser-strokes-store", "data"),
-    prevent_initial_call=True
-)
-def generate_report(n_clicks, json_data, height, width, eraser_strokes):
-    if not n_clicks or not state["image_orig"]:
-        return dash.no_update
-    
-    try:
-        mask_array = None
-        if json_data:
-            mask_array = parse_canvas_data(json_data, height, width, eraser_strokes)
-        
-        stats = compute_mask_stats(mask_array) if mask_array is not None else {}
-        
-        report_data = {
-            "filename": state.get("filename", "unknown"),
-            "file_type": state.get("file_type", "unknown"),
-            "image_size": f"{state['image_orig'].size[0]} x {state['image_orig'].size[1]}",
-            "disp_size": f"{state['disp_size'][0]} x {state['disp_size'][1]}",
-            "tool_type": stats.get("tool_type", "N/A"),
-            "area_pixels": stats.get("area_pixels", 0),
-            "percent": stats.get("percent", 0),
-            "bbox": stats.get("bbox", "N/A"),
-            "text_annotations": state["text_annotations"],
-            "saved_states_count": len(state["saved_states"]),
-            "zoom_level": state["zoom_level"],
-            "rotation": state["rotation"]
-        }
-        
-        report_html = generate_annotation_report(report_data)
-        
-        return dcc.send_string(report_html, f"annotation_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
-    
-    except Exception as e:
-        print(f"Report generation error: {e}")
-        return dash.no_update
-
-@app.callback(
-    Output("text-color", "data", allow_duplicate=True),
+    Output("text-color-store", "data"),
     Output("color-preview", "style"),
     Input("color-red", "n_clicks"),
     Input("color-green", "n_clicks"),
@@ -2667,6 +2563,354 @@ def update_text_color(*args):
     }
     
     return color, preview_style
+
+# Combined callback for canvas tool and text modal
+@app.callback(
+    Output("canvas", "tool"),
+    Output("text-modal", "is_open"),
+    Output("canvas", "lineColor"),
+    Output("canvas", "lineWidth"),
+    Input("tool-polygon", "n_clicks"),
+    Input("tool-rectangle", "n_clicks"),
+    Input("tool-circle", "n_clicks"),
+    Input("tool-line", "n_clicks"),
+    Input("tool-pen", "n_clicks"),
+    Input("tool-eraser", "n_clicks"),
+    Input("tool-text", "n_clicks"),
+    Input("cancel-text-btn", "n_clicks"),
+    Input("add-text-modal-btn", "n_clicks"),
+    State("text-modal", "is_open"),
+    prevent_initial_call=True
+)
+def update_canvas_tool(poly_clicks, rect_clicks, circle_clicks, line_clicks, pen_clicks, eraser_clicks, text_clicks, 
+                      cancel_clicks, add_clicks, is_open):
+    ctx = callback_context
+    if not ctx.triggered:
+        return "polygon", False, "red", 3
+    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    
+    if button_id == "tool-text":
+        return "polygon", True, "red", 3
+    elif button_id in ["cancel-text-btn", "add-text-modal-btn"]:
+        return "polygon", False, "red", 3
+    
+    tool_map = {
+        "tool-polygon": "polygon",
+        "tool-rectangle": "rectangle",
+        "tool-circle": "circle",
+        "tool-line": "line",
+        "tool-pen": "pen",
+        "tool-eraser": "pen"
+    }
+    
+    if button_id == "tool-eraser":
+        state["eraser_mode"] = True
+        line_color = "white"
+        line_width = 15
+    else:
+        state["eraser_mode"] = False
+        line_color = "red"
+        line_width = 3
+    
+    tool = tool_map.get(button_id, "polygon")
+    
+    return tool, is_open, line_color, line_width
+
+@app.callback(
+    Output("canvas", "image_content", allow_duplicate=True),
+    Output("canvas", "json_data", allow_duplicate=True),
+    Input("add-text-modal-btn", "n_clicks"),
+    State("text-input-modal", "value"),
+    State("font-size-slider", "value"),
+    State("font-style-dropdown", "value"),
+    State("text-x-position", "value"),
+    State("text-y-position", "value"),
+    State("text-color-store", "data"),
+    State("canvas-data-store", "children"),
+    State('canvas', 'height'),
+    State('canvas', 'width'),
+    State("eraser-strokes-store", "data"),
+    State("canvas", "json_data"),
+    prevent_initial_call=True
+)
+def add_text_annotation(n_clicks, text_value, font_size, font_style, x_pos, y_pos, text_color, 
+                        json_data_store, height, width, eraser_strokes, current_json_data):
+    if not n_clicks or not text_value or not state.get("image_original_pristine"):
+        return dash.no_update, dash.no_update
+    
+    # Fix: Ensure we have a valid hex color, fallback to red if invalid
+    try:
+        hex_color = text_color if text_color else state.get("text_color", "#FF0000")
+        # Make sure it's a valid hex color (starts with # and has 6 or 3 characters after)
+        if not hex_color or not hex_color.startswith('#') or len(hex_color) not in [4, 7]:
+            hex_color = "#FF0000"  # Default to red if invalid
+            
+        # Convert 3-digit hex to 6-digit if needed
+        if len(hex_color) == 4:  # e.g., #F00
+            hex_color = '#' + ''.join([c*2 for c in hex_color[1:]])  # #FF0000
+            
+        # Convert hex to RGB
+        rgb_color = tuple(int(hex_color[i:i+2], 16) for i in (1, 3, 5))
+    except Exception as e:
+        print(f"Error converting color: {e}, using default red")
+        hex_color = "#FF0000"
+        rgb_color = (255, 0, 0)
+    
+    # Calculate position in display coordinates
+    position = (
+        int(x_pos) if x_pos else 50, 
+        int(y_pos) if y_pos else 50
+    )
+    
+    # Store the NEW annotation first
+    state["text_annotations"].append({
+        "text": text_value,
+        "position": position,  # Store display coordinates
+        "font_size": int(font_size),
+        "font_style": font_style,
+        "color": hex_color,
+        "timestamp": datetime.datetime.now().isoformat()
+    })
+    
+    # Rebuild image from pristine original with ALL annotations
+    img_orig = state["image_original_pristine"].copy()
+    
+    # Calculate scale factors
+    orig_w, orig_h = img_orig.size
+    # First resize to get display size
+    img_temp, disp_size = resize_for_display(img_orig)
+    disp_w, disp_h = disp_size
+    scale_x = orig_w / disp_w
+    scale_y = orig_h / disp_h
+    
+    # Add ALL text annotations to the original image
+    for ann in state["text_annotations"]:
+        # Scale position and font size to original coordinates
+        position_orig = (
+            int(ann["position"][0] * scale_x),
+            int(ann["position"][1] * scale_y)
+        )
+        font_size_orig = int(ann["font_size"] * max(scale_x, scale_y))
+        
+        # Convert hex to RGB
+        hex_col = ann["color"]
+        rgb_col = tuple(int(hex_col[i:i+2], 16) for i in (1, 3, 5))
+        
+        img_orig = add_text_to_image(
+            img_orig, 
+            ann["text"], 
+            position_orig, 
+            font_size_orig, 
+            rgb_col, 
+            ann["font_style"]
+        )
+    
+    # Now create display version with all text
+    img_disp, disp_size = resize_for_display(img_orig)
+    
+    # Update state
+    state["image_orig"] = img_orig
+    state["image_display"] = img_disp
+    state["disp_size"] = disp_size
+    state["image_b64"] = pil_to_b64(img_disp)
+    
+    # Return updated image AND preserve the current canvas JSON data
+    return state["image_b64"], current_json_data
+@app.callback(
+    Output("tool-polygon", "outline"),
+    Output("tool-rectangle", "outline"),
+    Output("tool-circle", "outline"),
+    Output("tool-line", "outline"),
+    Output("tool-pen", "outline"),
+    Output("tool-eraser", "outline"),
+    Output("tool-text", "outline"),
+    Input("tool-polygon", "n_clicks"),
+    Input("tool-rectangle", "n_clicks"),
+    Input("tool-circle", "n_clicks"),
+    Input("tool-line", "n_clicks"),
+    Input("tool-pen", "n_clicks"),
+    Input("tool-eraser", "n_clicks"),
+    Input("tool-text", "n_clicks"),
+)
+def update_tool_buttons(poly_clicks, rect_clicks, circle_clicks, line_clicks, pen_clicks, eraser_clicks, text_clicks):
+    ctx = callback_context
+    if not ctx.triggered:
+        return True, True, True, True, True, True, True
+    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    outlines = [True] * 7
+    tool_map = {
+        "tool-polygon": 0,
+        "tool-rectangle": 1,
+        "tool-circle": 2,
+        "tool-line": 3,
+        "tool-pen": 4,
+        "tool-eraser": 5,
+        "tool-text": 6
+    }
+    if button_id in tool_map:
+        outlines[tool_map[button_id]] = False
+    return tuple(outlines)
+
+
+@app.callback(
+    Output("canvas", "image_content", allow_duplicate=True),
+    Input("rotate-left-btn", "n_clicks"),
+    Input("rotate-right-btn", "n_clicks"),
+    Input("flip-h-btn", "n_clicks"),
+    Input("flip-v-btn", "n_clicks"),
+    prevent_initial_call=True
+)
+def transform_image(rotate_left, rotate_right, flip_h, flip_v):
+    ctx = callback_context
+    if not ctx.triggered or not state["image_orig"]:
+        return dash.no_update
+    
+    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    img = state["image_orig"].copy()
+    
+    if button_id == "rotate-left-btn":
+        img = img.rotate(90, expand=True)
+        state["rotation"] = (state["rotation"] - 90) % 360
+    elif button_id == "rotate-right-btn":
+        img = img.rotate(-90, expand=True)
+        state["rotation"] = (state["rotation"] + 90) % 360
+    elif button_id == "flip-h-btn":
+        img = img.transpose(Image.FLIP_LEFT_RIGHT)
+        state["flip_horizontal"] = not state["flip_horizontal"]
+    elif button_id == "flip-v-btn":
+        img = img.transpose(Image.FLIP_TOP_BOTTOM)
+        state["flip_vertical"] = not state["flip_vertical"]
+    
+    state["image_orig"] = img
+    img_disp, disp_size = resize_for_display(img)
+    state["image_display"] = img_disp
+    state["disp_size"] = disp_size
+    state["image_b64"] = pil_to_b64(img_disp)
+    
+    return state["image_b64"]
+
+@app.callback(
+    Output("canvas", "json_data", allow_duplicate=True),
+    Input("clear-btn", "n_clicks"),
+    prevent_initial_call=True
+)
+def clear_annotations(n_clicks):
+    if n_clicks:
+        state["current_mask"] = None
+        state["canvas_json_data"] = None
+        state["eraser_strokes"] = []
+        return ""
+    return dash.no_update
+
+@app.callback(
+    Output("download-annotation", "data"),
+    Input("export-btn", "n_clicks"),
+    State("canvas-data-store", "children"),
+    State('canvas', 'height'),
+    State('canvas', 'width'),
+    State("eraser-strokes-store", "data"),
+    prevent_initial_call=True
+)
+def export_annotation(n_clicks, json_data, height, width, eraser_strokes):
+    if not n_clicks or not state["image_orig"]:
+        return dash.no_update
+    
+    try:
+        # Start with ORIGINAL pristine image
+        export_img = state["image_original_pristine"].copy()
+        
+        # Add all text annotations
+        for ann in state["text_annotations"]:
+            hex_color = ann["color"].lstrip('#')
+            rgb_color = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+            export_img = add_text_to_image(
+                export_img, 
+                ann["text"], 
+                ann["position"], 
+                ann["font_size"], 
+                rgb_color, 
+                ann["font_style"]
+            )
+        
+        img_bytes = io.BytesIO()
+        export_img.save(img_bytes, format='PNG')
+        img_bytes = img_bytes.getvalue()
+        
+        mask_array = None
+        if json_data:
+            mask_array = parse_canvas_data(json_data, height, width, eraser_strokes)
+        
+        mask_bytes = b""
+        if mask_array is not None and mask_array.any():
+            mask_img = Image.fromarray(mask_array)
+            mask_buf = io.BytesIO()
+            mask_img.save(mask_buf, format='PNG')
+            mask_bytes = mask_buf.getvalue()
+        
+        stats = compute_mask_stats(mask_array) if mask_array is not None else {}
+        metadata = {
+            "filename": state.get("filename", "unknown"),
+            "file_type": state.get("file_type", "unknown"),
+            "image_size": state["image_orig"].size,
+            "annotation_stats": stats,
+            "text_annotations": state["text_annotations"],
+            "timestamp": datetime.datetime.now().isoformat(),
+            "zoom_level": state["zoom_level"],
+            "rotation": state["rotation"],
+            "flip_horizontal": state["flip_horizontal"],
+            "flip_vertical": state["flip_vertical"]
+        }
+        
+        zip_buf = make_export_zip(img_bytes, mask_bytes, metadata, state.get("filename", "image"))
+        
+        return dcc.send_bytes(zip_buf.getvalue(), f"annotation_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip")
+    
+    except Exception as e:
+        print(f"Export error: {e}")
+        return dash.no_update
+
+@app.callback(
+    Output("download-report", "data"),
+    Input("report-btn", "n_clicks"),
+    State("canvas-data-store", "children"),
+    State('canvas', 'height'),
+    State('canvas', 'width'),
+    State("eraser-strokes-store", "data"),
+    prevent_initial_call=True
+)
+def generate_report(n_clicks, json_data, height, width, eraser_strokes):
+    if not n_clicks or not state["image_orig"]:
+        return dash.no_update
+    
+    try:
+        mask_array = None
+        if json_data:
+            mask_array = parse_canvas_data(json_data, height, width, eraser_strokes)
+        
+        stats = compute_mask_stats(mask_array) if mask_array is not None else {}
+        
+        report_data = {
+            "filename": state.get("filename", "unknown"),
+            "file_type": state.get("file_type", "unknown"),
+            "image_size": f"{state['image_orig'].size[0]} x {state['image_orig'].size[1]}",
+            "disp_size": f"{state['disp_size'][0]} x {state['disp_size'][1]}",
+            "tool_type": stats.get("tool_type", "N/A"),
+            "area_pixels": stats.get("area_pixels", 0),
+            "percent": stats.get("percent", 0),
+            "bbox": stats.get("bbox", "N/A"),
+            "text_annotations": state["text_annotations"],
+            "saved_states_count": len(state["saved_states"]),
+            "zoom_level": state["zoom_level"],
+            "rotation": state["rotation"]
+        }
+        
+        report_html = generate_annotation_report(report_data)
+        
+        return dcc.send_string(report_html, f"annotation_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
+    
+    except Exception as e:
+        print(f"Report generation error: {e}")
+        return dash.no_update
 
 @app.callback(
     Output("font-size-display", "children"),
@@ -2818,5 +3062,73 @@ def refresh_radiopaedia_cases(n_clicks):
     state["radiopaedia_cases"] = cases
     return format_radiopaedia_cases(cases)
 
+@app.callback(
+    Output('reset-trigger', 'children'),
+    Input('url', 'pathname')
+)
+def reset_global_state(path):
+    global state
+    state = {
+        "file_bytes": None,
+        "ds": None,
+        "image_orig": None,
+        "image_original_pristine": None,  # Added based on your code
+        "image_display": None,
+        "disp_size": None,
+        "current_mask": None,
+        "mask_history": [],
+        "mask_future": [],
+        "comments": [],
+        "chat_history": [],
+        "radiopaedia_cases": [],
+        "zoom_level": 1.0,
+        "rotation": 0,
+        "flip_horizontal": False,
+        "flip_vertical": False,
+        "fullscreen_mode": False,
+        "canvas_json_data": None,
+        "image_b64": None,
+        "text_color": "#FF0000",
+        "eraser_mode": False,
+        "eraser_strokes": [],
+        "saved_states": [],
+        "file_type": None,
+        "filename": None,
+        "session_id": None,
+        "text_annotations": [],  # Added based on your code
+        "total_slices": 0,  # If used in multi-slice handling
+        "current_slice": 0,
+        "image_slices": []
+    }
+    return ''
+app.clientside_callback(
+    """
+    function(pathname) {
+        if (pathname) {
+            // Clear localStorage and sessionStorage
+            try {
+                localStorage.clear();
+                sessionStorage.clear();
+            } catch (e) {
+                console.error('Error clearing storage:', e);
+            }
+            // Clear caches if available (optional, skip if not needed)
+            if ('caches' in window) {
+                caches.keys().then(function(names) {
+                    for (let name of names) {
+                        caches.delete(name);
+                    }
+                }).catch(function(e) {
+                    console.error('Error clearing caches:', e);
+                });
+            }
+        }
+        return pathname;
+    }
+    """,
+    Output('client-reset-trigger', 'children'),
+    Input('url', 'pathname')
+)
+
 if __name__ == '__main__':
-    app.run(debug=True, host='192.168.1.238', port=8050)
+    app.run( host='192.168.1.144', port=8050)

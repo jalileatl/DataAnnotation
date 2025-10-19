@@ -513,7 +513,7 @@ def chat_with_openai(prompt, history, image_data=None, api_key=OPENAI_API_KEY):
         4. Teaching Points
         5. Conclusion
         6.keywords for Radiopaedia search in one word
-        Use bullet points.
+        Use bullet points. Answer in plain text only — no Markdown formatting
         """
         messages = [{"role": "system", "content": system_message}]
         messages.extend(history[-6:])

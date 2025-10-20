@@ -2192,7 +2192,8 @@ def load_image(contents, filename):
             state["image_slices"] = [img_orig]
         else:
             return dash.no_update, dash.no_update, dash.no_update, f"❌ Unsupported file type: {file_ext}", {"display": "none"}
-        
+        # Resize original image to 512x512 pixels
+        img_orig = img_orig.resize((512, 512), Image.Resampling.LANCZOS)
         img_disp, disp_size = resize_for_display(img_orig)
         state.update({
             "file_bytes": file_bytes,
@@ -3131,4 +3132,4 @@ app.clientside_callback(
 )
 
 if __name__ == '__main__':
-    app.run( host='192.168.1.144', port=8050)
+    app.run( host='192.168.1.238', port=8050)
